@@ -1,0 +1,10 @@
+{
+  "active": null,
+  "repeaters": [
+    {
+      "id": "example",
+      "name": "Example Rooftop Repeater",
+      "key": "YOUR_REPEATER_PUBLIC_KEY_HEX_HERE"
+    }
+  ]
+}

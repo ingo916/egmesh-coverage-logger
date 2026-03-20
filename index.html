@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>EGMESH Logger</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e6edf3;min-height:100vh}
+  header{background:#161b22;border-bottom:1px solid #30363d;padding:14px 20px}
+  .logo{font-size:20px;font-weight:700;color:#58a6ff}
+  .sub{font-size:12px;color:#8b949e}
+  .wrap{max-width:600px;margin:0 auto;padding:20px 16px}
+  .card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px;margin-bottom:16px}
+  .card h2{font-size:12px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px}
+  .row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #21262d}
+  .row:last-child{border-bottom:none}
+  .lbl{font-size:13px;color:#8b949e}
+  .val{font-size:13px;font-weight:600;font-family:monospace}
+  .pill{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600}
+  .pg{background:#1a4731;color:#3fb950}
+  .py{background:#3d2f00;color:#d29922}
+  .pn{background:#21262d;color:#8b949e}
+  .snr-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px}
+  .snr-box{background:#0d1117;border-radius:8px;padding:12px;text-align:center}
+  .snr-lbl{font-size:11px;color:#8b949e;margin-bottom:4px}
+  .snr-val{font-size:26px;font-weight:700}
+  .snr-unit{font-size:11px;color:#8b949e}
+  .sg{color:#3fb950}.sy{color:#d29922}.sr{color:#f85149}.sn{color:#484f58}
+  .rt{margin-top:10px;text-align:center;font-size:11px;color:#8b949e}
+  .btn{display:block;width:100%;padding:14px;border-radius:8px;border:none;font-size:16px;font-weight:600;cursor:pointer;margin-bottom:10px;transition:opacity .15s}
+  .btn:active{opacity:.8}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .bs{background:#238636;color:#fff}
+  .bx{background:#da3633;color:#fff}
+  .bd{background:#21262d;color:#e6edf3;border:1px solid #30363d}
+  .br{background:#21262d;color:#8b949e;border:1px solid #30363d;margin-bottom:0}
+  .ping-item{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid #21262d;font-size:12px}
+  .ping-item:last-child{border-bottom:none}
+  .pt{color:#8b949e;font-family:monospace}
+  .pg2{color:#8b949e;font-size:11px}
+  .psnr{font-family:monospace;font-weight:600;font-size:13px;text-align:right}
+  .file-item{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #21262d;font-size:12px}
+  .file-item:last-child{border-bottom:none}
+  .fn{font-family:monospace;color:#8b949e;font-size:11px}
+  .fdl{color:#58a6ff;text-decoration:none}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;background:#484f58}
+  .dot.on{background:#3fb950;animation:pulse 1.5s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  .empty{color:#484f58;font-size:13px;padding:8px 0}
+  .inp{width:100%;padding:10px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:14px;margin-bottom:8px}
+  .inp:focus{outline:none;border-color:#58a6ff}
+  .inp-mono{font-family:monospace;font-size:12px}
+  summary{font-size:13px;color:#58a6ff;cursor:pointer;padding:4px 0}
+  summary:focus{outline:none}
+  .rep-item{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #21262d}
+  .rep-item:last-child{border-bottom:none}
+  .rep-info{flex:1;min-width:0}
+  .rep-name{font-size:13px;font-weight:600}
+  .rep-key{font-family:monospace;font-size:10px;color:#484f58;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .btn-sm{padding:5px 10px;border:none;border-radius:5px;font-size:12px;cursor:pointer;white-space:nowrap}
+  .btn-sel{background:#1f6feb;color:#fff}
+  .btn-del{background:#21262d;border:1px solid #30363d;color:#f85149}
+  .add-err{color:#f85149;font-size:12px;margin-bottom:6px;display:none}
+  .btn-add{width:100%;padding:11px;background:#1f6feb;border:none;border-radius:6px;color:#fff;font-size:14px;font-weight:600;cursor:pointer}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">⬡ EGMESH</div>
+  <div class="sub">Coverage Logger · Elk Grove</div>
+</header>
+
+<div class="wrap">
+
+  <!-- STATUS -->
+  <div class="card">
+    <h2>System Status</h2>
+    <div class="row">
+      <span class="lbl">Logger</span>
+      <span id="pill" class="pill pn">Idle</span>
+    </div>
+    <div class="row">
+      <span class="lbl">Stage</span>
+      <span id="stage" class="val">—</span>
+    </div>
+    <div class="row">
+      <span class="lbl">Pings sent</span>
+      <span id="count" class="val">0</span>
+    </div>
+    <div class="row">
+      <span class="lbl">GPS</span>
+      <span class="val">
+        <span id="dot" class="dot"></span>
+        <span id="gps">No fix</span>
+      </span>
+    </div>
+    <div class="row">
+      <span class="lbl">Log file</span>
+      <span id="logfile" class="val" style="font-size:11px;color:#8b949e">—</span>
+    </div>
+  </div>
+
+  <!-- LAST PING -->
+  <div class="card">
+    <h2>Last Ping</h2>
+    <div class="snr-grid">
+      <div class="snr-box">
+        <div class="snr-lbl">SNR there<br>(repeater heard you)</div>
+        <div id="snr-t" class="snr-val sn">—</div>
+        <div class="snr-unit">dB</div>
+      </div>
+      <div class="snr-box">
+        <div class="snr-lbl">SNR back<br>(you heard repeater)</div>
+        <div id="snr-b" class="snr-val sn">—</div>
+        <div class="snr-unit">dB</div>
+      </div>
+    </div>
+    <div class="rt">
+      Round trip: <span id="dur">—</span>ms &nbsp;·&nbsp; <span id="ptime">—</span>
+    </div>
+  </div>
+
+  <!-- REPEATER MANAGER -->
+  <div class="card">
+    <h2>Repeater</h2>
+    <div style="padding:10px 0 12px;border-bottom:1px solid #21262d;margin-bottom:12px">
+      <div style="font-size:11px;color:#8b949e;margin-bottom:4px">Active repeater</div>
+      <div id="rep-name" style="font-weight:700;font-size:15px;color:#58a6ff">None selected</div>
+      <div id="rep-key" style="font-family:monospace;font-size:10px;color:#484f58;word-break:break-all;margin-top:2px"></div>
+    </div>
+    <div id="rep-list" style="margin-bottom:14px">
+      <div class="empty">No repeaters saved yet</div>
+    </div>
+    <details id="add-form">
+      <summary>+ Add repeater</summary>
+      <div style="margin-top:12px">
+        <input id="inp-name" class="inp" type="text" placeholder="Name  (e.g. SE Rooftop RAK4631)">
+        <input id="inp-key"  class="inp inp-mono" type="text" placeholder="Public key hex  (from Companion app)">
+        <div id="add-err" class="add-err"></div>
+        <button class="btn-add" onclick="addRepeater()">Save Repeater</button>
+      </div>
+    </details>
+  </div>
+
+  <!-- CONTROLS -->
+  <div class="card">
+    <h2>Controls</h2>
+    <button id="bstart" class="btn bs" onclick="apiStart()">▶ Start Logging</button>
+    <button id="bstop"  class="btn bx" onclick="apiStop()" disabled>■ Stop Logging</button>
+    <button id="bdl"    class="btn bd" onclick="dlCurrent()" disabled>↓ Download Current CSV</button>
+    <button class="btn br" onclick="resetUI()">↺ Reset Display</button>
+  </div>
+
+  <!-- LIVE FEED -->
+  <div class="card">
+    <h2>Live Feed</h2>
+    <div id="feed"><div class="empty">Start logging to see live pings</div></div>
+  </div>
+
+  <!-- PAST LOGS -->
+  <div class="card">
+    <h2>Past Logs</h2>
+    <div id="flist"><div class="empty">Loading...</div></div>
+  </div>
+
+</div>
+
+<script>
+
+  // ── HELPERS ────────────────────────────────────────────────────────────────
+  function sc(v) {
+    const n = parseFloat(v);
+    if (isNaN(n)) return 'sn';
+    if (n >= 5)   return 'sg';
+    if (n >= -5)  return 'sy';
+    return 'sr';
+  }
+
+  function ft(iso) {
+    try { return new Date(iso).toLocaleTimeString(); }
+    catch(e) { return iso || '—'; }
+  }
+
+  // ── STATUS POLL ────────────────────────────────────────────────────────────
+  function poll() {
+    fetch('/api/status').then(r => r.json()).then(d => {
+      const pill = document.getElementById('pill');
+      if (d.running) { pill.className='pill pg'; pill.textContent='Running'; }
+      else           { pill.className='pill pn'; pill.textContent=d.status||'Idle'; }
+      document.getElementById('stage').textContent = d.status || '—';
+      document.getElementById('count').textContent = d.ping_count;
+      const g = d.last_gps, dot = document.getElementById('dot');
+      if (g && g.lat) {
+        document.getElementById('gps').textContent =
+          g.lat.toFixed(5) + ', ' + g.lon.toFixed(5);
+        dot.classList.add('on');
+      } else {
+        document.getElementById('gps').textContent = 'No fix';
+        dot.classList.remove('on');
+      }
+      document.getElementById('logfile').textContent = d.log_file || '—';
+      if (d.last_ping) {
+        const p  = d.last_ping;
+        const st = document.getElementById('snr-t');
+        const sb = document.getElementById('snr-b');
+        st.textContent = p.snr_there_dB || '—';
+        st.className   = 'snr-val ' + sc(p.snr_there_dB);
+        sb.textContent = p.snr_back_dB  || '—';
+        sb.className   = 'snr-val ' + sc(p.snr_back_dB);
+        document.getElementById('dur').textContent   = p.duration_ms || '—';
+        document.getElementById('ptime').textContent = ft(p.timestamp);
+      }
+      document.getElementById('bstart').disabled = d.running;
+      document.getElementById('bstop').disabled  = !d.running;
+      document.getElementById('bdl').disabled    = !d.log_file;
+      if (d.active_repeater) {
+        document.getElementById('rep-name').textContent = d.active_repeater.name;
+        document.getElementById('rep-key').textContent  = d.active_repeater.key;
+      }
+    }).catch(() => {});
+  }
+
+  // ── LIVE FEED ──────────────────────────────────────────────────────────────
+  function pollPings() {
+    fetch('/api/pings').then(r => r.json()).then(ps => {
+      const el = document.getElementById('feed');
+      if (!ps.length) {
+        el.innerHTML = '<div class="empty">No pings yet</div>';
+        return;
+      }
+      el.innerHTML = ps.slice(0, 25).map(p => {
+        const nr  = !p.snr_back_dB || p.snr_back_dB === 'NO_RESPONSE';
+        const gps = (p.latitude && p.longitude)
+          ? parseFloat(p.latitude).toFixed(4) + ', ' + parseFloat(p.longitude).toFixed(4)
+          : 'No GPS';
+        return `<div class="ping-item">
+          <div>
+            <div class="pt">${ft(p.timestamp)}</div>
+            <div class="pg2">${gps}</div>
+          </div>
+          <div class="psnr ${sc(p.snr_there_dB)}">${nr ? '—'        : p.snr_there_dB + 'dB'}</div>
+          <div class="psnr ${sc(p.snr_back_dB)}">${ nr ? 'NO RESP'  : p.snr_back_dB  + 'dB'}</div>
+        </div>`;
+      }).join('');
+    }).catch(() => {});
+  }
+
+  // ── PAST LOGS ──────────────────────────────────────────────────────────────
+  function pollFiles() {
+    fetch('/api/files').then(r => r.json()).then(fs => {
+      const el = document.getElementById('flist');
+      if (!fs.length) {
+        el.innerHTML = '<div class="empty">No logs yet</div>';
+        return;
+      }
+      el.innerHTML = fs.map(f =>
+        `<div class="file-item">
+          <span class="fn">${f}</span>
+          <a class="fdl" href="/api/download/${f}">Download</a>
+        </div>`
+      ).join('');
+    }).catch(() => {});
+  }
+
+  // ── REPEATER MANAGER ───────────────────────────────────────────────────────
+  function loadRepeaters() {
+    fetch('/api/repeaters').then(r => r.json()).then(cfg => {
+      const active = cfg.repeaters.find(r => r.id === cfg.active);
+      document.getElementById('rep-name').textContent = active ? active.name : 'None selected';
+      document.getElementById('rep-key').textContent  = active ? active.key  : '';
+      const el = document.getElementById('rep-list');
+      if (!cfg.repeaters.length) {
+        el.innerHTML = '<div class="empty">No repeaters saved yet</div>';
+        return;
+      }
+      el.innerHTML = cfg.repeaters.map(r => {
+        const isActive = r.id === cfg.active;
+        return `<div class="rep-item">
+          <div class="rep-info">
+            <div class="rep-name" style="color:${isActive ? '#3fb950' : '#e6edf3'}">
+              ${r.name}${isActive ? ' ✓' : ''}
+            </div>
+            <div class="rep-key">${r.key}</div>
+          </div>
+          ${!isActive
+            ? `<button class="btn-sm btn-sel" onclick="selectRepeater('${r.id}')">Select</button>`
+            : ''}
+          <button class="btn-sm btn-del" onclick="deleteRepeater('${r.id}')">✕</button>
+        </div>`;
+      }).join('');
+    }).catch(() => {});
+  }
+
+  function selectRepeater(id) {
+    fetch('/api/repeaters/select', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({id})
+    }).then(() => loadRepeaters());
+  }
+
+  function deleteRepeater(id) {
+    if (!confirm('Remove this repeater?')) return;
+    fetch('/api/repeaters/delete', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({id})
+    }).then(() => loadRepeaters());
+  }
+
+  function addRepeater() {
+    const name = document.getElementById('inp-name').value.trim();
+    const key  = document.getElementById('inp-key').value.trim();
+    const err  = document.getElementById('add-err');
+    err.style.display = 'none';
+    if (!name || !key) {
+      err.textContent   = 'Name and key are both required';
+      err.style.display = 'block';
+      return;
+    }
+    fetch('/api/repeaters/add', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({name, key})
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (!d.ok) { err.textContent = d.msg; err.style.display = 'block'; return; }
+      document.getElementById('inp-name').value = '';
+      document.getElementById('inp-key').value  = '';
+      document.getElementById('add-form').open  = false;
+      loadRepeaters();
+    });
+  }
+
+  // ── CONTROLS ───────────────────────────────────────────────────────────────
+  function apiStart() {
+    fetch('/api/start', {method:'POST'})
+      .then(r => r.json())
+      .then(d => {
+        if (!d.ok) alert(d.msg || 'Could not start — is a repeater selected?');
+        poll(); pollFiles();
+      });
+  }
+
+  function apiStop() {
+    fetch('/api/stop', {method:'POST'}).then(() => { poll(); pollFiles(); });
+  }
+
+  function dlCurrent() {
+    window.location.href = '/api/download';
+  }
+
+  // ── RESET DISPLAY ──────────────────────────────────────────────────────────
+  function resetUI() {
+    // Status card
+    const pill = document.getElementById('pill');
+    pill.className   = 'pill pn';
+    pill.textContent = 'Idle';
+    document.getElementById('stage').textContent   = '—';
+    document.getElementById('count').textContent   = '0';
+    document.getElementById('gps').textContent     = 'No fix';
+    document.getElementById('dot').classList.remove('on');
+    document.getElementById('logfile').textContent = '—';
+
+    // Last ping
+    const st = document.getElementById('snr-t');
+    const sb = document.getElementById('snr-b');
+    st.textContent = '—'; st.className = 'snr-val sn';
+    sb.textContent = '—'; sb.className = 'snr-val sn';
+    document.getElementById('dur').textContent   = '—';
+    document.getElementById('ptime').textContent = '—';
+
+    // Live feed
+    document.getElementById('feed').innerHTML =
+      '<div class="empty">Start logging to see live pings</div>';
+
+    // Buttons
+    document.getElementById('bstart').disabled = false;
+    document.getElementById('bstop').disabled  = true;
+    document.getElementById('bdl').disabled    = true;
+
+    // Repeater section is intentionally untouched
+  }
+
+  // ── INIT & POLLING ─────────────────────────────────────────────────────────
+  poll();
+  pollPings();
+  pollFiles();
+  loadRepeaters();
+
+  setInterval(poll,          3000);
+  setInterval(pollPings,     3000);
+  setInterval(pollFiles,    15000);
+  setInterval(loadRepeaters,10000);
+
+</script>
+</body>
+</html>
