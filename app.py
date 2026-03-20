@@ -6,12 +6,6 @@
 # Non-commercial community use permitted with attribution.
 # See LICENSE for full terms.
 # -----------------------------------------------------------------------------
-# Copyright (c) 2026 Ingo Azarvand / EGMESH.NET
-# Elk Grove, California - https://egmesh.net
-# Non-commercial community use permitted with attribution.
-# See LICENSE for full terms.
-# -----------------------------------------------------------------------------
-#!/usr/bin/env python3
 import asyncio, csv, os, time, threading, json
 from datetime import datetime
 from collections import deque
