@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -----------------------------------------------------------------------------
 # EGMESH Coverage Logger
 # Copyright (c) 2026 Ingo Azarvand / EGMESH.NET
@@ -6,22 +5,46 @@
 # Non-commercial community use permitted with attribution.
 # See LICENSE for full terms.
 # -----------------------------------------------------------------------------
+#!/usr/bin/env python3
 import asyncio, csv, os, time, threading, json
 from datetime import datetime
 from collections import deque
 from flask import Flask, jsonify, send_file, request
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
-GPS_PORT      = "/dev/ttyUSB0"
+GPS_PORT      = "/dev/ttyACM1"
 GPS_BAUD      = 9600
 PING_INTERVAL = 30
-LORA_FREQ     = 910.525
+LORA_FREQ = 910525000   # Hz
 LOG_DIR       = os.path.expanduser("~/egmesh_logs")
 CONFIG_FILE   = os.path.expanduser("~/egmesh_logger/repeaters.json")
 # ─────────────────────────────────────────────────────────────────────────────
 
 os.makedirs(LOG_DIR, exist_ok=True)
 app = Flask(__name__)
+
+# ── ASYNC EVENT LOOP (background thread for MeshPinger) ──────────────────────
+_loop = None
+_loop_thread = None
+
+def _start_async_loop():
+    global _loop
+    _loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(_loop)
+    _loop.run_forever()
+
+_loop_thread = threading.Thread(target=_start_async_loop, daemon=True)
+_loop_thread.start()
+time.sleep(0.3)  # let the loop start
+
+# ── MESH PINGER (persistent BLE connection) ──────────────────────────────────
+from mesh_ping import MeshPinger
+_pinger = MeshPinger()
+
+def _run_async(coro, timeout=45):
+    """Submit async coroutine to background loop, block for result."""
+    future = asyncio.run_coroutine_threadsafe(coro, _loop)
+    return future.result(timeout=timeout)
 
 # ── REPEATER CONFIG ───────────────────────────────────────────────────────────
 def load_config():
@@ -64,27 +87,21 @@ def read_gps():
     except Exception: pass
     return None, None
 
-# ── PING ──────────────────────────────────────────────────────────────────────
-def do_ping(key):
+# ── PING (using persistent MeshPinger) ────────────────────────────────────────
+def do_ping(lat=None, lon=None):
+    """Ping the repeater via persistent BLE connection. Returns dict."""
     try:
-        from pymc_core import MeshNode, LocalIdentity
-        from pymc_core.radio.waveshare import WaveshareRadio
-        result = {}
-        async def _ping():
-            node = MeshNode(identity=LocalIdentity.generate(),
-                            radio=WaveshareRadio(frequency=LORA_FREQ))
-            await node.start()
-            def cb(p):
-                result["snr_there"] = getattr(p,"snr_there",None)
-                result["snr_back"]  = getattr(p,"snr_rx",None)
-                result["duration"]  = getattr(p,"duration_ms",None)
-            t0 = time.time()
-            await node.ping(key, callback=cb, timeout=15)
-            if "duration" not in result:
-                result["duration"] = round((time.time()-t0)*1000)
-            await node.stop()
-        asyncio.run(_ping())
-        return result if result else None
+        result = _run_async(_pinger.ping_repeater(lat=lat, lon=lon))
+        if result.success:
+            return {
+                "snr_there": result.echo_snr,
+                "snr_back":  result.snr,
+                "rssi":      result.rssi,
+                "duration":  int((result.rtt_s or 0) * 1000),  # ms
+                "noise_floor": result.noise_floor,
+            }
+        else:
+            return {"error": result.error or "No response"}
     except Exception as e:
         return {"error": str(e)}
 
@@ -112,7 +129,7 @@ def logger_loop():
             lat, lon = read_gps()
             state["last_gps"] = {"lat":lat,"lon":lon}
             state["status"] = f"Pinging {rname}..."
-            ping = do_ping(key)
+            ping = do_ping(lat=lat, lon=lon)
             row = {
                 "timestamp":    ts,
                 "latitude":     lat or "",
@@ -158,7 +175,16 @@ def status():
         **state,
         "log_file": os.path.basename(state["log_file"]) if state["log_file"] else None,
         "active_repeater": active,
+        "ble_connected": _pinger.is_connected,
     })
+
+@app.route("/api/ping", methods=["POST","GET"])
+def api_ping():
+    """Manual single ping from the web UI."""
+    lat = state["last_gps"].get("lat")
+    lon = state["last_gps"].get("lon")
+    ping = do_ping(lat=lat, lon=lon)
+    return jsonify(ping)
 
 @app.route("/api/pings")
 def pings():
@@ -192,12 +218,10 @@ def add_repeater():
     if not name or not key:
         return jsonify({"ok":False,"msg":"Name and key are required"}), 400
     cfg = load_config()
-    # Check for duplicate key
     if any(r["key"] == key for r in cfg["repeaters"]):
         return jsonify({"ok":False,"msg":"That key already exists"}), 400
     new_id = str(int(time.time()))
     cfg["repeaters"].append({"id": new_id, "name": name, "key": key})
-    # Auto-select if it's the first one
     if not cfg["active"]:
         cfg["active"] = new_id
     save_config(cfg)
