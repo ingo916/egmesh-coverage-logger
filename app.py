@@ -12,7 +12,7 @@ from collections import deque
 from flask import Flask, jsonify, send_file, request
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
-GPS_PORT      = "/dev/ttyACM1"
+GPS_PORT      = "/dev/ttyACM0"
 GPS_BAUD      = 9600
 PING_INTERVAL = 30
 LORA_FREQ = 910525000   # Hz
