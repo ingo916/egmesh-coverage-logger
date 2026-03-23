@@ -1,20 +1,11 @@
 #!/usr/bin/env python3
 """
-EGMESH Coverage Logger — Ping/SNR Module (v2)
-Integrates with app.py Flask app to measure SNR to repeater and log to CSV.
+EGMESH Coverage Logger — Ping/SNR Module (v2.1)
+Auto-detects connection type: USB Serial (zero config) or BLE (requires pairing).
 
-How it works:
-    Repeater firmware doesn't support binary status requests, so we use a
-    different approach:
-
-    1. Subscribe to RX_LOG_DATA events (fired for every received packet)
-    2. Send send_statusreq to the repeater (triggers a flood packet)
-    3. The repeater re-broadcasts our packet — we receive the echo
-    4. The RX_LOG_DATA event from that echo contains SNR + RSSI
-    5. get_stats_radio confirms local radio's last_snr / last_rssi
-
-    This gives us the signal quality between our location and the repeater,
-    which is exactly what a coverage logger needs.
+Connection priority:
+    1. USB Serial — scans /dev/ttyACM* and /dev/ttyUSB*, skips GPS devices
+    2. BLE — falls back with retry logic and GATT cache clearing
 
 Usage from Flask:
     from mesh_ping import MeshPinger
@@ -24,6 +15,7 @@ Usage from Flask:
 
 import asyncio
 import csv
+import glob
 import logging
 import os
 import subprocess
@@ -38,7 +30,6 @@ logger = logging.getLogger("mesh_ping")
 
 
 def _shell(cmd, timeout=10):
-    """Run shell command silently, return stdout."""
     try:
         r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
         return r.stdout.strip()
@@ -47,15 +38,10 @@ def _shell(cmd, timeout=10):
 
 
 def _prep_ble(address: str):
-    """
-    Prepare BlueZ for a clean connection.
-    Clears stale GATT cache and disconnects lingering sessions.
-    This is the fix for 'failed to discover services' on Pi 4.
-    """
+    """Clear stale GATT cache and disconnect lingering BLE sessions."""
     logger.debug("Preparing BLE stack for %s", address)
     _shell(f"bluetoothctl disconnect {address}", timeout=5)
     time.sleep(1)
-
     addr_path = address.upper().replace(":", "_")
     cache_base = "/var/lib/bluetooth"
     adapters = _shell(f"ls {cache_base}/ 2>/dev/null").splitlines()
@@ -69,6 +55,20 @@ def _prep_ble(address: str):
     time.sleep(1)
 
 
+def _find_serial_ports():
+    """Find candidate serial ports, skipping known GPS devices."""
+    ports = sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
+    candidates = []
+    for port in ports:
+        info = _shell(f"udevadm info -q property {port} 2>/dev/null").lower()
+        # Skip GPS devices
+        if any(tag in info for tag in ["1546:", "id_vendor_id=1546", "u-blox", "ublox", "gps", "gnss", "sirf", "nmea"]):
+            logger.debug("Skipping GPS device: %s", port)
+            continue
+        candidates.append(port)
+    return candidates
+
+
 # ──────────────────────────────────────────────────
 #  Configuration
 # ──────────────────────────────────────────────────
@@ -76,18 +76,19 @@ BLE_ADDRESS = "E8:3F:59:DD:2F:F8"
 BLE_NAME = "EGMESH-LOGGER"
 REPEATER_NAME = "EG SE RAK4631 RPTR"
 CSV_PATH = Path("ping_log.csv")
+SERIAL_BAUD = 115200
 BLE_CONNECT_RETRIES = 3
 BLE_RETRY_DELAY = 4
-ECHO_TIMEOUT = 15             # seconds to wait for repeater echo
+ECHO_TIMEOUT = 15
 RECONNECT_COOLDOWN = 10
 
 
 class PingResult:
-    """Structured result from a single ping."""
     __slots__ = (
         "success", "timestamp", "rtt_s",
         "snr", "rssi", "noise_floor",
         "echo_snr", "echo_rssi",
+        "connection_type",
         "lat", "lon", "error",
     )
 
@@ -95,11 +96,12 @@ class PingResult:
         self.success = False
         self.timestamp = datetime.now(timezone.utc).isoformat()
         self.rtt_s = None
-        self.snr = None           # from get_stats_radio (last packet heard)
-        self.rssi = None          # from get_stats_radio
-        self.noise_floor = None   # local noise floor
-        self.echo_snr = None      # from RX_LOG_DATA (repeater echo)
-        self.echo_rssi = None     # from RX_LOG_DATA
+        self.snr = None
+        self.rssi = None
+        self.noise_floor = None
+        self.echo_snr = None
+        self.echo_rssi = None
+        self.connection_type = None
         self.lat = None
         self.lon = None
         self.error = None
@@ -112,6 +114,7 @@ class PingResult:
             self.timestamp, self.success, self.rtt_s,
             self.snr, self.rssi, self.noise_floor,
             self.echo_snr, self.echo_rssi,
+            self.connection_type,
             self.lat, self.lon, self.error or "",
         ]
 
@@ -119,16 +122,15 @@ class PingResult:
         "timestamp", "success", "rtt_s",
         "snr", "rssi", "noise_floor",
         "echo_snr", "echo_rssi",
+        "connection_type",
         "lat", "lon", "error",
     ]
 
 
 class MeshPinger:
     """
-    Manages BLE connection to MeshCore companion and pings a repeater.
-
-    Call await ping_repeater(lat, lon) to get a PingResult.
-    The BLE connection is lazy-initialized and auto-reconnects.
+    Auto-detects Serial or BLE connection to MeshCore companion.
+    Serial is tried first (zero config), BLE as fallback.
     """
 
     def __init__(
@@ -145,12 +147,12 @@ class MeshPinger:
 
         self._mc: Optional[MeshCore] = None
         self._repeater_contact = None
+        self._connection_type = None
         self._lock = asyncio.Lock()
         self._last_connect_attempt = 0.0
 
-        # RX_LOG_DATA capture state
-        self._rx_log_event = None       # asyncio.Event, set when echo arrives
-        self._rx_log_data = None        # captured RX_LOG_DATA payload
+        self._rx_log_event = None
+        self._rx_log_data = None
         self._rx_log_subscribed = False
 
         self._ensure_csv()
@@ -164,26 +166,19 @@ class MeshPinger:
         lat: Optional[float] = None,
         lon: Optional[float] = None,
     ) -> PingResult:
-        """
-        Ping the repeater and return SNR/RSSI result.
-
-        Sends a status request via flood routing, waits for the
-        repeater's echo (RX_LOG_DATA), then reads local radio stats.
-        """
         result = PingResult()
         result.lat = lat
         result.lon = lon
 
         try:
             mc = await self._ensure_connected()
+            result.connection_type = self._connection_type
             repeater = await self._find_repeater(mc)
             self._setup_rx_log_listener(mc)
 
-            # Reset capture state
             self._rx_log_data = None
             self._rx_log_event = asyncio.Event()
 
-            # Send status request — this floods through the repeater
             t0 = time.monotonic()
             send_result = await mc.commands.send_statusreq(repeater)
 
@@ -193,9 +188,9 @@ class MeshPinger:
                 self._log_csv(result)
                 return result
 
-            logger.info("Status request sent, waiting for repeater echo...")
+            logger.info("Status request sent via %s, waiting for echo...",
+                        self._connection_type)
 
-            # Wait for RX_LOG_DATA (repeater echo)
             try:
                 await asyncio.wait_for(
                     self._rx_log_event.wait(),
@@ -212,13 +207,11 @@ class MeshPinger:
                         result.echo_snr or 0, result.echo_rssi or 0,
                         result.rtt_s,
                     )
-
             except asyncio.TimeoutError:
                 result.rtt_s = round(time.monotonic() - t0, 2)
                 result.error = f"No echo within {ECHO_TIMEOUT}s"
                 logger.warning("Ping timeout: no RX_LOG_DATA received")
 
-            # Also read local radio stats for confirmation
             try:
                 radio = await mc.commands.get_stats_radio()
                 if radio.type != EventType.ERROR and isinstance(radio.payload, dict):
@@ -242,28 +235,29 @@ class MeshPinger:
         return result
 
     async def disconnect(self):
-        """Cleanly shut down the BLE connection."""
         await self._disconnect()
 
     @property
     def is_connected(self) -> bool:
         return self._mc is not None
 
+    @property
+    def connection_type(self) -> Optional[str]:
+        return self._connection_type
+
     # ──────────────────────────────────────────
     #  RX_LOG_DATA listener
     # ──────────────────────────────────────────
 
     def _setup_rx_log_listener(self, mc: MeshCore):
-        """Subscribe to RX_LOG_DATA once per connection."""
         if self._rx_log_subscribed:
             return
 
         async def on_rx_log(event):
             payload = event.payload
-            logger.debug("RX_LOG_DATA: snr=%s rssi=%s path=%s type=%s",
+            logger.debug("RX_LOG_DATA: snr=%s rssi=%s type=%s",
                          payload.get("snr"), payload.get("rssi"),
-                         payload.get("path"), payload.get("payload_typename"))
-            # Capture the first echo after we send
+                         payload.get("payload_typename"))
             if self._rx_log_event and not self._rx_log_event.is_set():
                 self._rx_log_data = payload
                 self._rx_log_event.set()
@@ -273,11 +267,10 @@ class MeshPinger:
         logger.debug("Subscribed to RX_LOG_DATA")
 
     # ──────────────────────────────────────────
-    #  Connection management
+    #  Connection management (auto-detect)
     # ──────────────────────────────────────────
 
     async def _ensure_connected(self) -> MeshCore:
-        """Return an active MeshCore instance, reconnecting if needed."""
         async with self._lock:
             if self._mc is not None:
                 return self._mc
@@ -289,43 +282,88 @@ class MeshPinger:
                 await asyncio.sleep(wait)
 
             self._last_connect_attempt = time.monotonic()
-            _prep_ble(self.ble_address)
 
-            for attempt in range(1, BLE_CONNECT_RETRIES + 1):
-                try:
-                    logger.info("BLE connect attempt %d/%d  addr=%s",
-                                attempt, BLE_CONNECT_RETRIES, self.ble_address)
-                    mc = await MeshCore.create_ble(self.ble_address)
-                    self._mc = mc
-                    self._repeater_contact = None
-                    self._rx_log_subscribed = False
-                    logger.info("BLE connected via MAC")
-                    return mc
-                except Exception as e:
-                    logger.warning("BLE connect attempt %d failed: %s", attempt, e)
-                    if attempt < BLE_CONNECT_RETRIES:
-                        if attempt >= 2:
-                            logger.info("Cycling hci0 adapter...")
-                            _shell("sudo hciconfig hci0 down")
-                            await asyncio.sleep(2)
-                            _shell("sudo hciconfig hci0 up")
-                        await asyncio.sleep(BLE_RETRY_DELAY)
+            # Try Serial first (zero config)
+            mc = await self._try_serial()
+            if mc:
+                return mc
 
+            # Fall back to BLE
+            mc = await self._try_ble()
+            if mc:
+                return mc
+
+            raise ConnectionError(
+                "Could not connect via Serial or BLE. "
+                "Serial: plug in USB with serial companion firmware. "
+                "BLE: pair device first with bluetoothctl."
+            )
+
+    async def _try_serial(self) -> Optional[MeshCore]:
+        candidates = _find_serial_ports()
+        if not candidates:
+            logger.debug("No candidate serial ports found")
+            return None
+
+        for port in candidates:
             try:
-                logger.info("Trying BLE name scan: %s", self.ble_name)
-                mc = await MeshCore.create_ble(self.ble_name)
+                logger.info("Trying serial: %s @ %d baud", port, SERIAL_BAUD)
+                mc = await MeshCore.create_serial(port, SERIAL_BAUD)
+                # Verify it actually responded (create_serial returns None on failure)
+                if mc is None:
+                    logger.debug("Serial %s returned None", port)
+                    continue
                 self._mc = mc
+                self._connection_type = "serial"
                 self._repeater_contact = None
                 self._rx_log_subscribed = False
-                logger.info("BLE connected via name scan")
+                logger.info("Connected via SERIAL on %s", port)
                 return mc
             except Exception as e:
-                raise ConnectionError(
-                    f"BLE connection failed after {BLE_CONNECT_RETRIES} retries: {e}"
-                ) from e
+                logger.debug("Serial %s failed: %s", port, e)
+                continue
+
+        logger.info("No serial companion found, trying BLE...")
+        return None
+
+    async def _try_ble(self) -> Optional[MeshCore]:
+        _prep_ble(self.ble_address)
+
+        for attempt in range(1, BLE_CONNECT_RETRIES + 1):
+            try:
+                logger.info("BLE connect attempt %d/%d  addr=%s",
+                            attempt, BLE_CONNECT_RETRIES, self.ble_address)
+                mc = await MeshCore.create_ble(self.ble_address)
+                self._mc = mc
+                self._connection_type = "ble"
+                self._repeater_contact = None
+                self._rx_log_subscribed = False
+                logger.info("Connected via BLE")
+                return mc
+            except Exception as e:
+                logger.warning("BLE attempt %d failed: %s", attempt, e)
+                if attempt < BLE_CONNECT_RETRIES:
+                    if attempt >= 2:
+                        logger.info("Cycling hci0 adapter...")
+                        _shell("sudo hciconfig hci0 down")
+                        await asyncio.sleep(2)
+                        _shell("sudo hciconfig hci0 up")
+                    await asyncio.sleep(BLE_RETRY_DELAY)
+
+        try:
+            logger.info("Trying BLE name scan: %s", self.ble_name)
+            mc = await MeshCore.create_ble(self.ble_name)
+            self._mc = mc
+            self._connection_type = "ble"
+            self._repeater_contact = None
+            self._rx_log_subscribed = False
+            logger.info("Connected via BLE name scan")
+            return mc
+        except Exception as e:
+            logger.warning("BLE name scan failed: %s", e)
+            return None
 
     async def _find_repeater(self, mc: MeshCore):
-        """Find repeater contact, loading contacts if needed."""
         if self._repeater_contact is not None:
             return self._repeater_contact
 
@@ -354,10 +392,10 @@ class MeshPinger:
         )
 
     async def _disconnect(self):
-        """Tear down BLE connection."""
         mc = self._mc
         self._mc = None
         self._repeater_contact = None
+        self._connection_type = None
         self._rx_log_subscribed = False
         if mc is not None:
             try:
