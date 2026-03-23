@@ -131,7 +131,7 @@ class MeshPinger:
 
         self._ensure_csv()
 
-    # ──────────────────────────────────���───────
+    # ──────────────────────────────────────────
     #  Public API — Ping
     # ──────────────────────────────────────────
 
@@ -139,11 +139,18 @@ class MeshPinger:
         self,
         lat: Optional[float] = None,
         lon: Optional[float] = None,
+        repeater_name: Optional[str] = None,
     ) -> PingResult:
-        """Ping the repeater and return SNR/RSSI result."""
+        """Ping the repeater and return SNR/RSSI result.
+        If repeater_name is provided, uses that instead of the default."""
         result = PingResult()
         result.lat = lat
         result.lon = lon
+
+        # Update target repeater if a different name was passed
+        if repeater_name and repeater_name != self.repeater_name:
+            self.repeater_name = repeater_name
+            self._repeater_contact = None  # force re-lookup
 
         try:
             mc = await self._ensure_connected()
@@ -218,7 +225,7 @@ class MeshPinger:
             info_data.update(event.payload)
             info_event.set()
 
-        sub_handle = mc.subscribe(EventType.SELF_INFO, on_self_info)
+        mc.subscribe(EventType.SELF_INFO, on_self_info)
 
         try:
             # Re-send appstart to trigger fresh SELF_INFO
@@ -232,7 +239,7 @@ class MeshPinger:
             else:
                 info_data = {"error": "No response from device"}
         finally:
-            mc.unsubscribe(sub_handle)
+            mc.unsubscribe(EventType.SELF_INFO, on_self_info)
 
         return info_data
 
@@ -434,7 +441,7 @@ class MeshPinger:
             except Exception:
                 pass
 
-    # ───────────────────────────���──────────────
+    # ──────────────────────────────────────────
     #  CSV logging
     # ──────────────────────────────────────────
 

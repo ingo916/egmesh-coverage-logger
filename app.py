@@ -62,6 +62,13 @@ def get_active_key():
     match = next((r for r in cfg["repeaters"] if r["id"] == cfg["active"]), None)
     return match["key"] if match else None
 
+def get_active_name():
+    cfg = load_config()
+    if not cfg["active"]:
+        return None
+    match = next((r for r in cfg["repeaters"] if r["id"] == cfg["active"]), None)
+    return match["name"] if match else None
+
 # ── STATE ─────────────────────────────────────────────────────────────────────
 state = {"running":False,"log_file":None,"ping_count":0,
          "last_ping":None,"last_gps":{"lat":None,"lon":None},"status":"Idle"}
@@ -107,7 +114,8 @@ def read_gps():
 def do_ping(lat=None, lon=None):
     """Ping the repeater via persistent serial connection."""
     try:
-        result = _run_async(_pinger.ping_repeater(lat=lat, lon=lon))
+        rname = get_active_name()
+        result = _run_async(_pinger.ping_repeater(lat=lat, lon=lon, repeater_name=rname))
         if result.success:
             return {
                 "snr_there": result.echo_snr,
