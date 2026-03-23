@@ -1,6 +1,6 @@
 [Unit]
 Description=EGMESH Coverage Logger
-After=bluetooth.target network.target
+After=network.target
 
 [Service]
 Type=simple

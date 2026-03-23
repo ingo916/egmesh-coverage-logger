@@ -10,7 +10,7 @@ Elk Grove, California
 
 ## What it does
 
-Runs on a Raspberry Pi 4 with a RAK WisBlock RAK4631 BLE companion radio.
+Runs on a Raspberry Pi with a MeshCore companion radio connected via USB.
 Broadcasts its own WiFi hotspot so you can connect your phone while
 driving. Live web dashboard shows real-time SNR ping results and GPS
 coordinates. After your drive, generate an interactive HTML heatmap
@@ -18,9 +18,8 @@ overlaid on OpenStreetMap street maps.
 
 **How ping measurement works:** The logger sends a status request through
 the mesh via flood routing. The repeater re-broadcasts the packet, and the
-companion radio captures the echo. The RX_LOG_DATA event from that echo
-contains the SNR and RSSI values — this is the signal quality between your
-current location and the repeater.
+companion radio captures the echo. The SNR and RSSI from that echo tell you
+the signal quality between your current location and the repeater.
 
 ---
 
@@ -28,9 +27,9 @@ current location and the repeater.
 
 | Component | Details |
 |---|---|
-| Raspberry Pi 4 | Any RAM variant |
-| RAK WisBlock RAK4631 | MeshCore companion firmware, BLE connection |
-| USB GPS dongle | u-blox NEO-6M or compatible |
+| Raspberry Pi | Pi 4 or Pi 5, any RAM variant |
+| MeshCore companion radio | RAK4631, Heltec, T-Beam, etc. — USB Companion firmware |
+| USB GPS dongle | u-blox NEO-6M/7 or compatible |
 | MicroSD card | 16GB+ |
 | Power | USB-C power bank or 12V car adapter |
 
@@ -53,7 +52,7 @@ current location and the repeater.
 | File | Purpose |
 |---|---|
 | `app.py` | Flask web app — routes, GPS reading, logger loop |
-| `mesh_ping.py` | BLE ping module — persistent connection, SNR/RSSI capture |
+| `mesh_ping.py` | Serial ping module — auto-detects USB, captures SNR/RSSI |
 | `index.html` | Web dashboard UI |
 | `heatmap.py` | Post-drive heatmap generator |
 | `install.sh` | One-step installer |
@@ -64,7 +63,12 @@ current location and the repeater.
 
 ## Quick start
 
-### 1. Install
+### 1. Flash USB Companion firmware
+
+Go to [flasher.meshcore.co](https://flasher.meshcore.co), select your
+device, choose **Companion USB**, and flash it.
+
+### 2. Install
 
 ```bash
 git clone https://github.com/ingo916/egmesh-coverage-logger.git
@@ -72,63 +76,44 @@ cd egmesh-coverage-logger
 chmod +x install.sh && ./install.sh
 ```
 
-### 2. Pair the BLE companion radio
+### 3. Plug in the hardware
 
-The RAK4631 connects to the Pi via Bluetooth Low Energy. Pair it once:
+Connect the companion radio and GPS dongle to the Pi via USB.
+The serial port is auto-detected — no pairing or configuration needed.
 
-```bash
-bluetoothctl
-> agent KeyboardOnly
-> default-agent
-> scan on
-```
-
-Wait for your MeshCore device to appear (e.g. `MeshCore-EGMESH-LOGGER`), then:
-
-```
-> pair <MAC_ADDRESS>
-```
-
-Enter the PIN when prompted (default: `123456`), then:
-
-```
-> trust <MAC_ADDRESS>
-> scan off
-> exit
-```
-
-Verify it's paired:
-
-```bash
-bluetoothctl devices Paired
-```
-
-### 3. Configure the radio
-
-Edit `mesh_ping.py` and set your device's MAC address and repeater name:
-
-```python
-BLE_ADDRESS = "E8:3F:59:DD:2F:F8"      # Your companion's MAC
-REPEATER_NAME = "EG SE RAK4631 RPTR"    # Name of the repeater to ping
-```
-
-If your companion radio needs its frequency/bandwidth configured, use meshcli:
+### 4. Configure the radio (one time)
 
 ```bash
 pip install meshcore-cli
-meshcli -a <MAC_ADDRESS>
+meshcli -s /dev/ttyACM0
+```
+
+Inside meshcli, set your radio parameters and wait for the repeater:
+
+```
 /set radio 910.525,125,9,5
 /reboot
 ```
 
-Reconnect and verify the repeater appears in contacts:
+Reconnect and verify the repeater appears:
 
 ```bash
-meshcli -a <MAC_ADDRESS>
+meshcli -s /dev/ttyACM0
+/set manual_add_contacts off
 /contacts
 ```
 
-### 4. Set up Wi-Fi hotspot (optional, for field use)
+Wait for the repeater to show up, then `/quit`.
+
+### 5. Configure the repeater name
+
+Edit `mesh_ping.py` and set your repeater name:
+
+```python
+REPEATER_NAME = "EG SE RAK4631 RPTR"    # Change to your repeater's name
+```
+
+### 6. Set up Wi-Fi hotspot (optional, for field use)
 
 ```bash
 sudo ./setup_hotspot.sh
@@ -137,7 +122,7 @@ sudo reboot
 
 Connect phone to WiFi **EGMESH-LOGGER** (password: egmesh2025)
 
-### 5. Start the service
+### 7. Start
 
 ```bash
 sudo systemctl start egmesh
@@ -149,19 +134,18 @@ Open browser: **http://192.168.4.1:5000**
 
 ## Testing the ping manually
 
-Run the ping module standalone to verify BLE and radio are working:
-
 ```bash
 cd ~/egmesh_logger
 source venv/bin/activate
-sudo venv/bin/python3 mesh_ping.py
+python3 mesh_ping.py
 ```
 
-You should see output like:
+You should see:
 
 ```
-Echo received: snr=10.75  rssi=-46  rtt=0.9s
-Local radio: snr=10.75  rssi=-46  noise=-104
+Trying serial: /dev/ttyACM0 @ 115200 baud
+Connected via SERIAL on /dev/ttyACM0
+Echo received: snr=10.75  rssi=-41  rtt=0.5s
 ```
 
 ---
@@ -181,51 +165,52 @@ Internet connection required when viewing.
 
 ## Troubleshooting
 
-### BLE won't connect / "service discovery failed"
+### "No MeshCore device found"
 
-This is usually a stale GATT cache on the Pi. Fix it:
+Make sure the companion radio is plugged in via USB and running
+**USB Companion** firmware (not BLE Companion). Check:
 
 ```bash
-bluetoothctl remove <MAC_ADDRESS>
-sudo systemctl restart bluetooth
+ls /dev/ttyACM* /dev/ttyUSB*
 ```
 
-Power cycle the RAK4631, then re-pair (see step 2 above).
+You should see at least two ports — one for the radio, one for GPS.
 
-### 0 contacts after connecting
+### "Device did not respond"
 
-The repeater needs to advertise before it appears in the contact list.
-Connect with meshcli and wait a few minutes:
+The device may be running BLE Companion firmware instead of USB Companion.
+Reflash from [flasher.meshcore.co](https://flasher.meshcore.co) —
+select **Companion USB**.
+
+### 0 contacts / repeater not found
+
+The repeater needs to advertise before it appears. Connect with meshcli
+and wait a few minutes:
 
 ```bash
-meshcli -a <MAC_ADDRESS>
+meshcli -s /dev/ttyACM0
 /set print_adverts on
+/set manual_add_contacts off
 /contacts
 ```
 
-### "No repeater selected" when starting
+### GPS port changed
 
-Make sure the app runs with the correct HOME directory:
+If the USB ports swap after replugging, the GPS port in `app.py` may
+need updating. Check which port is which:
 
 ```bash
-sudo -E env HOME=/home/pi venv/bin/python3 app.py
+udevadm info -q property /dev/ttyACM0 | grep MODEL
+udevadm info -q property /dev/ttyACM1 | grep MODEL
 ```
 
-The systemd service handles this automatically.
-
-### BlueZ 5.82+ command changes
-
-If `bluetoothctl paired-devices` doesn't work, use:
-
-```
-bluetoothctl devices Paired
-```
+Update `GPS_PORT` in `app.py` to match the u-blox device.
 
 ---
 
 ## Adapting for your community
 
-Edit `mesh_ping.py` to set your BLE address and repeater name.
+Edit `mesh_ping.py` to set your repeater name.
 Change `LORA_FREQ` in `app.py` to your region's frequency.
 Update the header in `index.html` to your network name.
 

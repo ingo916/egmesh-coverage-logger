@@ -4,7 +4,7 @@
 set -e
 
 echo ""
-echo "  EGMESH Coverage Logger - Installer v1.1"
+echo "  EGMESH Coverage Logger - Installer v2.1"
 echo "  https://egmesh.net"
 echo ""
 
@@ -39,7 +39,7 @@ echo "  Installing systemd service..."
 sudo bash -c "cat > /etc/systemd/system/egmesh.service << SVCEOF
 [Unit]
 Description=EGMESH Coverage Logger
-After=bluetooth.target network.target
+After=network.target
 
 [Service]
 Type=simple
@@ -57,32 +57,31 @@ SVCEOF"
 sudo systemctl daemon-reload
 sudo systemctl enable egmesh
 
-# ── BLE setup reminder ───────────────────────────────────────────────────────
 echo ""
 echo "  ┌─────────────────────────────────────────────────────┐"
 echo "  │  Install complete!                                  │"
 echo "  │                                                     │"
-echo "  │  NEXT STEPS:                                        │"
+echo "  │  SETUP:                                             │"
 echo "  │                                                     │"
-echo "  │  1. Pair your MeshCore BLE companion:               │"
-echo "  │     bluetoothctl                                    │"
-echo "  │     > agent KeyboardOnly                            │"
-echo "  │     > default-agent                                 │"
-echo "  │     > scan on                                       │"
-echo "  │     (wait for device to appear)                     │"
-echo "  │     > pair <MAC_ADDRESS>                            │"
-echo "  │     (enter PIN when prompted)                       │"
-echo "  │     > trust <MAC_ADDRESS>                           │"
-echo "  │     > exit                                          │"
+echo "  │  1. Flash USB Companion firmware on your device:    │"
+echo "  │     https://flasher.meshcore.co                     │"
 echo "  │                                                     │"
-echo "  │  2. Configure radio in mesh_ping.py:                │"
-echo "  │     BLE_ADDRESS = 'your:mac:address'                │"
+echo "  │  2. Plug the device into the Pi via USB             │"
+echo "  │     (auto-detected, no pairing needed)              │"
+echo "  │                                                     │"
+echo "  │  3. Configure radio (one time):                     │"
+echo "  │     pip install meshcore-cli                        │"
+echo "  │     meshcli -s /dev/ttyACM0                         │"
+echo "  │     /set radio 910.525,125,9,5                      │"
+echo "  │     /reboot                                         │"
+echo "  │                                                     │"
+echo "  │  4. Edit mesh_ping.py:                              │"
 echo "  │     REPEATER_NAME = 'your repeater name'            │"
 echo "  │                                                     │"
-echo "  │  3. Set up Wi-Fi hotspot (optional):                │"
+echo "  │  5. Set up Wi-Fi hotspot (optional):                │"
 echo "  │     sudo ./setup_hotspot.sh                         │"
 echo "  │                                                     │"
-echo "  │  4. Start the service:                              │"
+echo "  │  6. Start the service:                              │"
 echo "  │     sudo systemctl start egmesh                     │"
 echo "  │                                                     │"
 echo "  │  Web UI: http://192.168.4.1:5000                    │"
