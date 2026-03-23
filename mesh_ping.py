@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 """
 EGMESH Coverage Logger — Ping/SNR Module (v3)
@@ -225,7 +226,7 @@ class MeshPinger:
             info_data.update(event.payload)
             info_event.set()
 
-        mc.subscribe(EventType.SELF_INFO, on_self_info)
+        sub_handle = mc.subscribe(EventType.SELF_INFO, on_self_info)
 
         try:
             # Re-send appstart to trigger fresh SELF_INFO
@@ -239,7 +240,7 @@ class MeshPinger:
             else:
                 info_data = {"error": "No response from device"}
         finally:
-            mc.unsubscribe(EventType.SELF_INFO, on_self_info)
+            mc.unsubscribe(sub_handle)
 
         return info_data
 
@@ -331,7 +332,7 @@ class MeshPinger:
 
     # ──────────────────────────────────────────
     #  Public properties
-    # ──────────────────────────────────────────
+    # ─��────────────────────────────────────────
 
     async def disconnect(self):
         await self._disconnect()
