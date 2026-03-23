@@ -1,23 +1,20 @@
 #!/usr/bin/env python3
 """
-EGMESH Coverage Logger — Ping/SNR Module (v2.1)
-Auto-detects connection type: USB Serial (zero config) or BLE (requires pairing).
+EGMESH Coverage Logger — Ping/SNR Module (v3)
+USB Serial only — auto-detects MeshCore companion radio.
 
-Connection priority:
-    1. USB Serial — scans /dev/ttyACM* and /dev/ttyUSB*, skips GPS devices
-    2. BLE — falls back with retry logic and GATT cache clearing
-
-Usage from Flask:
-    from mesh_ping import MeshPinger
-    pinger = MeshPinger()
-    result = await pinger.ping_repeater(lat=38.41, lon=-121.37)
+Features:
+    - Auto-detect serial port (skips GPS devices)
+    - Ping repeater via flood echo (RX_LOG_DATA)
+    - Read device info and radio config
+    - Scan contacts from device
+    - Configure radio settings and reboot from web UI
 """
 
 import asyncio
 import csv
 import glob
 import logging
-import os
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -32,53 +29,33 @@ logger = logging.getLogger("mesh_ping")
 def _shell(cmd, timeout=10):
     try:
         r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
-        return r.stdout.strip()
-    except Exception:
-        return ""
+        return r.returncode, r.stdout.strip(), r.stderr.strip()
+    except Exception as e:
+        return -1, "", str(e)
 
 
-def _prep_ble(address: str):
-    """Clear stale GATT cache and disconnect lingering BLE sessions."""
-    logger.debug("Preparing BLE stack for %s", address)
-    _shell(f"bluetoothctl disconnect {address}", timeout=5)
-    time.sleep(1)
-    addr_path = address.upper().replace(":", "_")
-    cache_base = "/var/lib/bluetooth"
-    adapters = _shell(f"ls {cache_base}/ 2>/dev/null").splitlines()
-    for adapter in adapters:
-        adapter = adapter.strip()
-        for suffix in ["cache", "attributes"]:
-            path = f"{cache_base}/{adapter}/{addr_path}/{suffix}"
-            if _shell(f"test -e {path} && echo yes") == "yes":
-                logger.info("Clearing stale GATT cache: %s", path)
-                _shell(f"sudo rm -rf {path}")
-    time.sleep(1)
-
-
-def _find_serial_ports():
-    """Find candidate serial ports, skipping known GPS devices."""
+def _find_serial_port():
+    """Auto-detect the MeshCore serial port, skipping GPS devices."""
     ports = sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
-    candidates = []
     for port in ports:
-        info = _shell(f"udevadm info -q property {port} 2>/dev/null").lower()
-        # Skip GPS devices
-        if any(tag in info for tag in ["1546:", "id_vendor_id=1546", "u-blox", "ublox", "gps", "gnss", "sirf", "nmea"]):
+        rc, info, _ = _shell(f"udevadm info -q property {port} 2>/dev/null")
+        info = info.lower()
+        if any(tag in info for tag in [
+            "id_vendor_id=1546", "u-blox", "ublox", "gps", "gnss", "sirf", "nmea",
+        ]):
             logger.debug("Skipping GPS device: %s", port)
             continue
-        candidates.append(port)
-    return candidates
+        logger.debug("Candidate MeshCore port: %s", port)
+        return port
+    return None
 
 
 # ──────────────────────────────────────────────────
 #  Configuration
 # ──────────────────────────────────────────────────
-BLE_ADDRESS = "E8:3F:59:DD:2F:F8"
-BLE_NAME = "EGMESH-LOGGER"
 REPEATER_NAME = "EG SE RAK4631 RPTR"
 CSV_PATH = Path("ping_log.csv")
 SERIAL_BAUD = 115200
-BLE_CONNECT_RETRIES = 3
-BLE_RETRY_DELAY = 4
 ECHO_TIMEOUT = 15
 RECONNECT_COOLDOWN = 10
 
@@ -88,7 +65,7 @@ class PingResult:
         "success", "timestamp", "rtt_s",
         "snr", "rssi", "noise_floor",
         "echo_snr", "echo_rssi",
-        "connection_type",
+        "serial_port",
         "lat", "lon", "error",
     )
 
@@ -101,7 +78,7 @@ class PingResult:
         self.noise_floor = None
         self.echo_snr = None
         self.echo_rssi = None
-        self.connection_type = None
+        self.serial_port = None
         self.lat = None
         self.lon = None
         self.error = None
@@ -114,7 +91,7 @@ class PingResult:
             self.timestamp, self.success, self.rtt_s,
             self.snr, self.rssi, self.noise_floor,
             self.echo_snr, self.echo_rssi,
-            self.connection_type,
+            self.serial_port,
             self.lat, self.lon, self.error or "",
         ]
 
@@ -122,32 +99,29 @@ class PingResult:
         "timestamp", "success", "rtt_s",
         "snr", "rssi", "noise_floor",
         "echo_snr", "echo_rssi",
-        "connection_type",
+        "serial_port",
         "lat", "lon", "error",
     ]
 
 
 class MeshPinger:
     """
-    Auto-detects Serial or BLE connection to MeshCore companion.
-    Serial is tried first (zero config), BLE as fallback.
+    Connects to MeshCore companion via USB serial.
+    Auto-detects serial port. Supports ping, radio config, and contact scanning.
     """
 
     def __init__(
         self,
-        ble_address: str = BLE_ADDRESS,
-        ble_name: str = BLE_NAME,
         repeater_name: str = REPEATER_NAME,
         csv_path: Path = CSV_PATH,
     ):
-        self.ble_address = ble_address
-        self.ble_name = ble_name
         self.repeater_name = repeater_name
         self.csv_path = Path(csv_path)
 
         self._mc: Optional[MeshCore] = None
+        self._serial_port: Optional[str] = None
         self._repeater_contact = None
-        self._connection_type = None
+        self._self_info = None
         self._lock = asyncio.Lock()
         self._last_connect_attempt = 0.0
 
@@ -157,8 +131,8 @@ class MeshPinger:
 
         self._ensure_csv()
 
-    # ──────────────────────────────────────────
-    #  Public API
+    # ──────────────────────────────────���───────
+    #  Public API — Ping
     # ──────────────────────────────────────────
 
     async def ping_repeater(
@@ -166,13 +140,14 @@ class MeshPinger:
         lat: Optional[float] = None,
         lon: Optional[float] = None,
     ) -> PingResult:
+        """Ping the repeater and return SNR/RSSI result."""
         result = PingResult()
         result.lat = lat
         result.lon = lon
 
         try:
             mc = await self._ensure_connected()
-            result.connection_type = self._connection_type
+            result.serial_port = self._serial_port
             repeater = await self._find_repeater(mc)
             self._setup_rx_log_listener(mc)
 
@@ -189,28 +164,23 @@ class MeshPinger:
                 return result
 
             logger.info("Status request sent via %s, waiting for echo...",
-                        self._connection_type)
+                        self._serial_port)
 
             try:
                 await asyncio.wait_for(
-                    self._rx_log_event.wait(),
-                    timeout=ECHO_TIMEOUT,
-                )
+                    self._rx_log_event.wait(), timeout=ECHO_TIMEOUT)
                 result.rtt_s = round(time.monotonic() - t0, 2)
                 result.success = True
-
                 if self._rx_log_data:
                     result.echo_snr = self._rx_log_data.get("snr")
                     result.echo_rssi = self._rx_log_data.get("rssi")
-                    logger.info(
-                        "Echo received: snr=%.2f  rssi=%d  rtt=%.1fs",
-                        result.echo_snr or 0, result.echo_rssi or 0,
-                        result.rtt_s,
-                    )
+                    logger.info("Echo: snr=%.2f rssi=%d rtt=%.1fs",
+                                result.echo_snr or 0, result.echo_rssi or 0,
+                                result.rtt_s)
             except asyncio.TimeoutError:
                 result.rtt_s = round(time.monotonic() - t0, 2)
                 result.error = f"No echo within {ECHO_TIMEOUT}s"
-                logger.warning("Ping timeout: no RX_LOG_DATA received")
+                logger.warning("Ping timeout")
 
             try:
                 radio = await mc.commands.get_stats_radio()
@@ -218,11 +188,6 @@ class MeshPinger:
                     result.snr = radio.payload.get("last_snr")
                     result.rssi = radio.payload.get("last_rssi")
                     result.noise_floor = radio.payload.get("noise_floor")
-                    logger.info(
-                        "Local radio: snr=%.2f  rssi=%d  noise=%d",
-                        result.snr or 0, result.rssi or 0,
-                        result.noise_floor or 0,
-                    )
             except Exception as e:
                 logger.debug("get_stats_radio failed: %s", e)
 
@@ -234,16 +199,139 @@ class MeshPinger:
         self._log_csv(result)
         return result
 
+    # ──────────────────────────────────────────
+    #  Public API — Device Info & Radio Config
+    # ──────────────────────────────────────────
+
+    async def get_device_info(self) -> dict:
+        """
+        Get current device info including radio settings.
+        Returns dict with radio_freq, radio_bw, radio_sf, radio_cr, name, etc.
+        """
+        mc = await self._ensure_connected()
+
+        # Subscribe to SELF_INFO before sending appstart
+        info_event = asyncio.Event()
+        info_data = {}
+
+        async def on_self_info(event):
+            info_data.update(event.payload)
+            info_event.set()
+
+        sub_handle = mc.subscribe(EventType.SELF_INFO, on_self_info)
+
+        try:
+            # Re-send appstart to trigger fresh SELF_INFO
+            await mc.commands.send_appstart()
+            await asyncio.wait_for(info_event.wait(), timeout=5)
+            self._self_info = info_data
+        except asyncio.TimeoutError:
+            # Fall back to cached info
+            if self._self_info:
+                info_data = self._self_info
+            else:
+                info_data = {"error": "No response from device"}
+        finally:
+            mc.unsubscribe(sub_handle)
+
+        return info_data
+
+    async def configure_radio(self, freq: float, bw: float, sf: int, cr: int) -> dict:
+        """
+        Set radio parameters and reboot the device.
+        Disconnects the current session (device reboots).
+        Returns {"ok": True} or {"ok": False, "error": "..."}.
+        """
+        port = self._serial_port or _find_serial_port()
+        if not port:
+            return {"ok": False, "error": "No MeshCore device found"}
+
+        # Disconnect so meshcli can use the serial port
+        await self._disconnect()
+        await asyncio.sleep(1)
+
+        # Use meshcli to set radio and reboot
+        radio_str = f"{freq},{bw},{sf},{cr}"
+        logger.info("Configuring radio: %s on %s", radio_str, port)
+
+        try:
+            # Send commands via meshcli stdin
+            commands = f"/set radio {radio_str}\n/reboot\nquit\n"
+            rc, stdout, stderr = _shell(
+                f'echo "{commands}" | timeout 15 meshcli -s {port}',
+                timeout=20,
+            )
+            logger.info("meshcli output: %s %s", stdout[:200], stderr[:200])
+
+            if "Error" in stdout or "Error" in stderr:
+                return {"ok": False, "error": f"meshcli error: {stdout} {stderr}"}
+
+        except Exception as e:
+            return {"ok": False, "error": f"Failed to run meshcli: {e}"}
+
+        # Wait for device to reboot
+        logger.info("Waiting for device to reboot...")
+        await asyncio.sleep(6)
+
+        # Try to reconnect to verify
+        try:
+            mc = await self._ensure_connected()
+            info = await self.get_device_info()
+            return {
+                "ok": True,
+                "radio_freq": info.get("radio_freq"),
+                "radio_bw": info.get("radio_bw"),
+                "radio_sf": info.get("radio_sf"),
+                "radio_cr": info.get("radio_cr"),
+            }
+        except Exception as e:
+            return {
+                "ok": True,
+                "warning": f"Radio set but reconnect failed: {e}. May need to replug USB.",
+            }
+
+    # ──────────────────────────────────────────
+    #  Public API — Contact Scanning
+    # ──────────────────────────────────────────
+
+    async def scan_contacts(self) -> list:
+        """
+        Get all contacts from the device.
+        Returns list of dicts with name, key, type.
+        """
+        mc = await self._ensure_connected()
+        result = await mc.commands.get_contacts()
+
+        if result.type == EventType.ERROR:
+            logger.warning("scan_contacts error: %s", result.payload)
+            return []
+
+        contacts = []
+        for pubkey, contact in result.payload.items():
+            contacts.append({
+                "name": contact.get("adv_name", ""),
+                "key": pubkey,
+                "type": contact.get("type", 0),
+                "type_name": {0: "Node", 1: "Client", 2: "Repeater", 3: "Bridge"}.get(
+                    contact.get("type", 0), "Unknown"
+                ),
+                "lat": contact.get("adv_lat"),
+                "lon": contact.get("adv_lon"),
+            })
+
+        logger.info("Scanned %d contacts", len(contacts))
+        return contacts
+
+    # ──────────────────────────────────────────
+    #  Public properties
+    # ──────────────────────────────────────────
+
     async def disconnect(self):
         await self._disconnect()
 
     @property
     def is_connected(self) -> bool:
         return self._mc is not None
-
-    @property
-    def connection_type(self) -> Optional[str]:
-        return self._connection_type
 
     # ──────────────────────────────────────────
     #  RX_LOG_DATA listener
@@ -264,10 +352,9 @@ class MeshPinger:
 
         mc.subscribe(EventType.RX_LOG_DATA, on_rx_log)
         self._rx_log_subscribed = True
-        logger.debug("Subscribed to RX_LOG_DATA")
 
     # ──────────────────────────────────────────
-    #  Connection management (auto-detect)
+    #  Connection management
     # ──────────────────────────────────────────
 
     async def _ensure_connected(self) -> MeshCore:
@@ -278,90 +365,33 @@ class MeshPinger:
             elapsed = time.monotonic() - self._last_connect_attempt
             if elapsed < RECONNECT_COOLDOWN:
                 wait = RECONNECT_COOLDOWN - elapsed
-                logger.debug("Reconnect cooldown: waiting %.1fs", wait)
                 await asyncio.sleep(wait)
 
             self._last_connect_attempt = time.monotonic()
 
-            # Try Serial first (zero config)
-            mc = await self._try_serial()
-            if mc:
-                return mc
+            port = _find_serial_port()
+            if not port:
+                raise ConnectionError(
+                    "No MeshCore device found. "
+                    "Plug in the companion radio via USB. "
+                    "Flash USB Companion firmware from https://flasher.meshcore.co"
+                )
 
-            # Fall back to BLE
-            mc = await self._try_ble()
-            if mc:
-                return mc
+            logger.info("Connecting to %s @ %d baud", port, SERIAL_BAUD)
+            mc = await MeshCore.create_serial(port, SERIAL_BAUD)
 
-            raise ConnectionError(
-                "Could not connect via Serial or BLE. "
-                "Serial: plug in USB with serial companion firmware. "
-                "BLE: pair device first with bluetoothctl."
-            )
+            if mc is None:
+                raise ConnectionError(
+                    f"Device on {port} did not respond. "
+                    "Make sure it is running USB Companion firmware."
+                )
 
-    async def _try_serial(self) -> Optional[MeshCore]:
-        candidates = _find_serial_ports()
-        if not candidates:
-            logger.debug("No candidate serial ports found")
-            return None
-
-        for port in candidates:
-            try:
-                logger.info("Trying serial: %s @ %d baud", port, SERIAL_BAUD)
-                mc = await MeshCore.create_serial(port, SERIAL_BAUD)
-                # Verify it actually responded (create_serial returns None on failure)
-                if mc is None:
-                    logger.debug("Serial %s returned None", port)
-                    continue
-                self._mc = mc
-                self._connection_type = "serial"
-                self._repeater_contact = None
-                self._rx_log_subscribed = False
-                logger.info("Connected via SERIAL on %s", port)
-                return mc
-            except Exception as e:
-                logger.debug("Serial %s failed: %s", port, e)
-                continue
-
-        logger.info("No serial companion found, trying BLE...")
-        return None
-
-    async def _try_ble(self) -> Optional[MeshCore]:
-        _prep_ble(self.ble_address)
-
-        for attempt in range(1, BLE_CONNECT_RETRIES + 1):
-            try:
-                logger.info("BLE connect attempt %d/%d  addr=%s",
-                            attempt, BLE_CONNECT_RETRIES, self.ble_address)
-                mc = await MeshCore.create_ble(self.ble_address)
-                self._mc = mc
-                self._connection_type = "ble"
-                self._repeater_contact = None
-                self._rx_log_subscribed = False
-                logger.info("Connected via BLE")
-                return mc
-            except Exception as e:
-                logger.warning("BLE attempt %d failed: %s", attempt, e)
-                if attempt < BLE_CONNECT_RETRIES:
-                    if attempt >= 2:
-                        logger.info("Cycling hci0 adapter...")
-                        _shell("sudo hciconfig hci0 down")
-                        await asyncio.sleep(2)
-                        _shell("sudo hciconfig hci0 up")
-                    await asyncio.sleep(BLE_RETRY_DELAY)
-
-        try:
-            logger.info("Trying BLE name scan: %s", self.ble_name)
-            mc = await MeshCore.create_ble(self.ble_name)
             self._mc = mc
-            self._connection_type = "ble"
+            self._serial_port = port
             self._repeater_contact = None
             self._rx_log_subscribed = False
-            logger.info("Connected via BLE name scan")
+            logger.info("Connected via serial on %s", port)
             return mc
-        except Exception as e:
-            logger.warning("BLE name scan failed: %s", e)
-            return None
 
     async def _find_repeater(self, mc: MeshCore):
         if self._repeater_contact is not None:
@@ -394,8 +424,9 @@ class MeshPinger:
     async def _disconnect(self):
         mc = self._mc
         self._mc = None
+        self._serial_port = None
         self._repeater_contact = None
-        self._connection_type = None
+        self._self_info = None
         self._rx_log_subscribed = False
         if mc is not None:
             try:
@@ -403,7 +434,7 @@ class MeshPinger:
             except Exception:
                 pass
 
-    # ──────────────────────────────────────────
+    # ───────────────────────────���──────────────
     #  CSV logging
     # ──────────────────────────────────────────
 
@@ -430,22 +461,21 @@ async def _standalone_test():
     )
     pinger = MeshPinger()
 
-    print("\n--- Ping 1 ---")
-    r1 = await pinger.ping_repeater(lat=38.4088, lon=-121.3716)
-    print(f"\nResult:")
-    for k in PingResult.__slots__:
-        print(f"  {k:20s} = {getattr(r1, k)}")
+    print("\n--- Device Info ---")
+    info = await pinger.get_device_info()
+    for k in ["name", "radio_freq", "radio_bw", "radio_sf", "radio_cr", "tx_power"]:
+        print(f"  {k:15s} = {info.get(k)}")
 
-    await asyncio.sleep(3)
+    print("\n--- Contacts ---")
+    contacts = await pinger.scan_contacts()
+    for c in contacts:
+        print(f"  {c['name']:30s}  {c['type_name']:10s}  {c['key'][:16]}...")
 
-    print("\n--- Ping 2 (reuses connection) ---")
-    r2 = await pinger.ping_repeater(lat=38.4088, lon=-121.3716)
-    print(f"\nResult:")
-    for k in PingResult.__slots__:
-        print(f"  {k:20s} = {getattr(r2, k)}")
+    print("\n--- Ping ---")
+    r = await pinger.ping_repeater(lat=38.4088, lon=-121.3716)
+    print(f"  success={r.success}  snr={r.echo_snr}  rssi={r.echo_rssi}  rtt={r.rtt_s}s")
 
     await pinger.disconnect()
-    print(f"\nCSV log: {pinger.csv_path}")
 
 
 if __name__ == "__main__":

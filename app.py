@@ -6,16 +6,14 @@
 # See LICENSE for full terms.
 # -----------------------------------------------------------------------------
 #!/usr/bin/env python3
-import asyncio, csv, os, time, threading, json
+import asyncio, csv, os, time, threading, json, glob, subprocess
 from datetime import datetime
 from collections import deque
 from flask import Flask, jsonify, send_file, request
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
-GPS_PORT      = "/dev/ttyACM1"
 GPS_BAUD      = 9600
 PING_INTERVAL = 30
-LORA_FREQ = 910525000   # Hz
 LOG_DIR       = os.path.expanduser("~/egmesh_logs")
 CONFIG_FILE   = os.path.expanduser("~/egmesh_logger/repeaters.json")
 # ─────────────────────────────────────────────────────────────────────────────
@@ -35,9 +33,9 @@ def _start_async_loop():
 
 _loop_thread = threading.Thread(target=_start_async_loop, daemon=True)
 _loop_thread.start()
-time.sleep(0.3)  # let the loop start
+time.sleep(0.3)
 
-# ── MESH PINGER (persistent BLE connection) ──────────────────────────────────
+# ── MESH PINGER (persistent serial connection) ───────────────────────────────
 from mesh_ping import MeshPinger
 _pinger = MeshPinger()
 
@@ -71,10 +69,28 @@ recent_pings = deque(maxlen=100)
 stop_event   = threading.Event()
 
 # ── GPS ───────────────────────────────────────────────────────────────────────
+def _find_gps_port():
+    """Auto-detect GPS serial port by checking USB vendor/product IDs."""
+    ports = sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
+    for port in ports:
+        try:
+            info = subprocess.run(
+                f"udevadm info -q property {port}",
+                shell=True, capture_output=True, text=True, timeout=5
+            ).stdout.lower()
+        except Exception:
+            continue
+        if any(tag in info for tag in ["id_vendor_id=1546", "u-blox", "ublox", "gps", "gnss"]):
+            return port
+    return None
+
 def read_gps():
     try:
         import serial, pynmea2
-        with serial.Serial(GPS_PORT, GPS_BAUD, timeout=5) as ser:
+        gps_port = _find_gps_port()
+        if not gps_port:
+            return None, None
+        with serial.Serial(gps_port, GPS_BAUD, timeout=5) as ser:
             deadline = time.time() + 6
             while time.time() < deadline:
                 line = ser.readline().decode("ascii", errors="replace").strip()
@@ -87,9 +103,9 @@ def read_gps():
     except Exception: pass
     return None, None
 
-# ── PING (using persistent MeshPinger) ────────────────────────────────────────
+# ── PING ──────────────────────────────────────────────────────────────────────
 def do_ping(lat=None, lon=None):
-    """Ping the repeater via persistent BLE connection. Returns dict."""
+    """Ping the repeater via persistent serial connection."""
     try:
         result = _run_async(_pinger.ping_repeater(lat=lat, lon=lon))
         if result.success:
@@ -97,7 +113,7 @@ def do_ping(lat=None, lon=None):
                 "snr_there": result.echo_snr,
                 "snr_back":  result.snr,
                 "rssi":      result.rssi,
-                "duration":  int((result.rtt_s or 0) * 1000),  # ms
+                "duration":  int((result.rtt_s or 0) * 1000),
                 "noise_floor": result.noise_floor,
             }
         else:
@@ -175,16 +191,14 @@ def status():
         **state,
         "log_file": os.path.basename(state["log_file"]) if state["log_file"] else None,
         "active_repeater": active,
-        "ble_connected": _pinger.is_connected,
+        "connected": _pinger.is_connected,
     })
 
 @app.route("/api/ping", methods=["POST","GET"])
 def api_ping():
-    """Manual single ping from the web UI."""
     lat = state["last_gps"].get("lat")
     lon = state["last_gps"].get("lon")
-    ping = do_ping(lat=lat, lon=lon)
-    return jsonify(ping)
+    return jsonify(do_ping(lat=lat, lon=lon))
 
 @app.route("/api/pings")
 def pings():
@@ -204,6 +218,63 @@ def dl():
 def dl_file(fn):
     p = os.path.join(LOG_DIR, fn)
     return send_file(p, as_attachment=True) if os.path.exists(p) else (jsonify({"error":"Not found"}),404)
+
+# ── ROUTES: RADIO CONFIGURATION ───────────────────────────────────────────────
+@app.route("/api/radio", methods=["GET"])
+def get_radio():
+    """Get current radio settings from the device."""
+    try:
+        info = _run_async(_pinger.get_device_info(), timeout=15)
+        return jsonify({
+            "ok": True,
+            "freq": info.get("radio_freq"),
+            "bw": info.get("radio_bw"),
+            "sf": info.get("radio_sf"),
+            "cr": info.get("radio_cr"),
+            "tx_power": info.get("tx_power"),
+            "name": info.get("name"),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/api/radio", methods=["POST"])
+def set_radio():
+    """Set radio parameters and reboot the device."""
+    data = request.get_json()
+    freq = data.get("freq")
+    bw = data.get("bw")
+    sf = data.get("sf")
+    cr = data.get("cr")
+
+    if not all([freq, bw, sf, cr]):
+        return jsonify({"ok": False, "error": "freq, bw, sf, and cr are all required"}), 400
+
+    try:
+        freq = float(freq)
+        bw = float(bw)
+        sf = int(sf)
+        cr = int(cr)
+    except ValueError:
+        return jsonify({"ok": False, "error": "Invalid number format"}), 400
+
+    try:
+        result = _run_async(
+            _pinger.configure_radio(freq, bw, sf, cr),
+            timeout=30,
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+# ── ROUTES: CONTACT SCANNING ─────────────────────────────────────────────────
+@app.route("/api/contacts/scan", methods=["GET"])
+def scan_contacts():
+    """Scan for contacts from the device."""
+    try:
+        contacts = _run_async(_pinger.scan_contacts(), timeout=15)
+        return jsonify({"ok": True, "contacts": contacts})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "contacts": []}), 500
 
 # ── ROUTES: REPEATER MANAGEMENT ───────────────────────────────────────────────
 @app.route("/api/repeaters")

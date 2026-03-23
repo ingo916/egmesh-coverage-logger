@@ -58,6 +58,7 @@
   .inp{width:100%;padding:10px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:14px;margin-bottom:8px}
   .inp:focus{outline:none;border-color:#58a6ff}
   .inp-mono{font-family:monospace;font-size:12px}
+  .inp-half{width:48%}
   summary{font-size:13px;color:#58a6ff;cursor:pointer;padding:4px 0}
   summary:focus{outline:none}
   .rep-item{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #21262d}
@@ -70,6 +71,30 @@
   .btn-del{background:#21262d;border:1px solid #30363d;color:#f85149}
   .add-err{color:#f85149;font-size:12px;margin-bottom:6px;display:none}
   .btn-add{width:100%;padding:11px;background:#1f6feb;border:none;border-radius:6px;color:#fff;font-size:14px;font-weight:600;cursor:pointer}
+  .btn-scan{width:100%;padding:11px;background:#238636;border:none;border-radius:6px;color:#fff;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:10px}
+  .btn-scan:disabled{opacity:.5;cursor:not-allowed}
+  .radio-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
+  .radio-field label{font-size:11px;color:#8b949e;display:block;margin-bottom:3px}
+  .radio-field input{width:100%;padding:8px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:14px;font-family:monospace}
+  .radio-field input:focus{outline:none;border-color:#58a6ff}
+  .radio-current{font-size:11px;color:#484f58;margin-bottom:10px;font-family:monospace}
+  .btn-radio{width:100%;padding:11px;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:8px}
+  .btn-radio:disabled{opacity:.5;cursor:not-allowed}
+  .btn-radio-read{background:#21262d;color:#e6edf3;border:1px solid #30363d}
+  .btn-radio-write{background:#da3633;color:#fff}
+  .radio-status{font-size:12px;padding:6px 0;display:none}
+  .contact-card{display:flex;align-items:center;gap:10px;padding:10px;background:#0d1117;border:1px solid #30363d;border-radius:8px;margin-bottom:8px;cursor:pointer;transition:border-color .15s}
+  .contact-card:hover{border-color:#58a6ff}
+  .contact-card.selected{border-color:#3fb950;background:#0d1f0d}
+  .contact-icon{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+  .contact-icon.rep{background:#1a4731;color:#3fb950}
+  .contact-icon.node{background:#21262d;color:#8b949e}
+  .contact-name{font-size:13px;font-weight:600}
+  .contact-meta{font-size:11px;color:#8b949e}
+  .contact-key{font-family:monospace;font-size:9px;color:#484f58}
+  .scan-hint{font-size:11px;color:#8b949e;margin-bottom:8px}
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px}
+  @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -129,6 +154,33 @@
     </div>
   </div>
 
+  <!-- RADIO CONFIGURATION -->
+  <div class="card">
+    <h2>Radio Configuration</h2>
+    <div id="radio-current" class="radio-current">Not connected — plug in USB companion radio</div>
+    <div class="radio-grid">
+      <div class="radio-field">
+        <label>Frequency (MHz)</label>
+        <input id="r-freq" type="text" placeholder="910.525">
+      </div>
+      <div class="radio-field">
+        <label>Bandwidth (kHz)</label>
+        <input id="r-bw" type="text" placeholder="125">
+      </div>
+      <div class="radio-field">
+        <label>Spreading Factor</label>
+        <input id="r-sf" type="text" placeholder="9">
+      </div>
+      <div class="radio-field">
+        <label>Coding Rate</label>
+        <input id="r-cr" type="text" placeholder="5">
+      </div>
+    </div>
+    <button class="btn-radio btn-radio-read" onclick="readRadio()">↻ Read from Radio</button>
+    <button id="btn-write-radio" class="btn-radio btn-radio-write" onclick="writeRadio()">⚡ Write to Radio &amp; Reboot</button>
+    <div id="radio-status" class="radio-status"></div>
+  </div>
+
   <!-- REPEATER MANAGER -->
   <div class="card">
     <h2>Repeater</h2>
@@ -137,11 +189,19 @@
       <div id="rep-name" style="font-weight:700;font-size:15px;color:#58a6ff">None selected</div>
       <div id="rep-key" style="font-family:monospace;font-size:10px;color:#484f58;word-break:break-all;margin-top:2px"></div>
     </div>
+
+    <!-- Scan for Repeaters -->
+    <button id="btn-scan" class="btn-scan" onclick="scanContacts()">📡 Scan for Repeaters</button>
+    <div id="scan-results" style="display:none">
+      <div class="scan-hint">Tap a contact to add it as a repeater:</div>
+      <div id="scan-list"></div>
+    </div>
+
     <div id="rep-list" style="margin-bottom:14px">
       <div class="empty">No repeaters saved yet</div>
     </div>
     <details id="add-form">
-      <summary>+ Add repeater</summary>
+      <summary>+ Add repeater manually</summary>
       <div style="margin-top:12px">
         <input id="inp-name" class="inp" type="text" placeholder="Name  (e.g. SE Rooftop RAK4631)">
         <input id="inp-key"  class="inp inp-mono" type="text" placeholder="Public key hex  (from Companion app)">
@@ -188,6 +248,14 @@
   function ft(iso) {
     try { return new Date(iso).toLocaleTimeString(); }
     catch(e) { return iso || '—'; }
+  }
+
+  function showRadioStatus(msg, isError) {
+    const el = document.getElementById('radio-status');
+    el.textContent = msg;
+    el.style.color = isError ? '#f85149' : '#3fb950';
+    el.style.display = 'block';
+    setTimeout(() => { el.style.display = 'none'; }, 8000);
   }
 
   // ── STATUS POLL ────────────────────────────────────────────────────────────
@@ -269,6 +337,152 @@
         </div>`
       ).join('');
     }).catch(() => {});
+  }
+
+  // ── RADIO CONFIGURATION ────────────────────────────────────────────────────
+  function readRadio() {
+    const el = document.getElementById('radio-current');
+    el.textContent = 'Reading from radio...';
+    fetch('/api/radio')
+      .then(r => r.json())
+      .then(d => {
+        if (d.ok) {
+          document.getElementById('r-freq').value = d.freq || '';
+          document.getElementById('r-bw').value   = d.bw   || '';
+          document.getElementById('r-sf').value   = d.sf   || '';
+          document.getElementById('r-cr').value   = d.cr   || '';
+          el.textContent = `Current: ${d.freq} MHz / BW${d.bw} / SF${d.sf} / CR${d.cr}  ·  ${d.name || ''}`;
+          showRadioStatus('Radio settings loaded', false);
+        } else {
+          el.textContent = 'Error: ' + (d.error || 'Could not read radio');
+          showRadioStatus(d.error || 'Read failed', true);
+        }
+      })
+      .catch(e => {
+        el.textContent = 'Connection error';
+        showRadioStatus('Connection error: ' + e, true);
+      });
+  }
+
+  function writeRadio() {
+    const freq = document.getElementById('r-freq').value.trim();
+    const bw   = document.getElementById('r-bw').value.trim();
+    const sf   = document.getElementById('r-sf').value.trim();
+    const cr   = document.getElementById('r-cr').value.trim();
+
+    if (!freq || !bw || !sf || !cr) {
+      showRadioStatus('All four fields are required', true);
+      return;
+    }
+
+    if (!confirm(`Write radio settings?\n\nFreq: ${freq} MHz\nBW: ${bw} kHz\nSF: ${sf}\nCR: ${cr}\n\nThe device will reboot.`)) {
+      return;
+    }
+
+    const btn = document.getElementById('btn-write-radio');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Writing & rebooting...';
+    document.getElementById('radio-current').textContent = 'Writing to radio and rebooting...';
+
+    fetch('/api/radio', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({freq, bw, sf, cr})
+    })
+    .then(r => r.json())
+    .then(d => {
+      btn.disabled = false;
+      btn.textContent = '⚡ Write to Radio & Reboot';
+      if (d.ok) {
+        const cur = document.getElementById('radio-current');
+        cur.textContent = `Set: ${d.radio_freq || freq} MHz / BW${d.radio_bw || bw} / SF${d.radio_sf || sf} / CR${d.radio_cr || cr}`;
+        showRadioStatus(d.warning || 'Radio configured and rebooted successfully!', !!d.warning);
+      } else {
+        showRadioStatus(d.error || 'Write failed', true);
+        document.getElementById('radio-current').textContent = 'Write failed — try again';
+      }
+    })
+    .catch(e => {
+      btn.disabled = false;
+      btn.textContent = '⚡ Write to Radio & Reboot';
+      showRadioStatus('Error: ' + e, true);
+    });
+  }
+
+  // ── CONTACT SCANNING ───────────────────────────────────────────────────────
+  function scanContacts() {
+    const btn  = document.getElementById('btn-scan');
+    const list = document.getElementById('scan-list');
+    const wrap = document.getElementById('scan-results');
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Scanning...';
+
+    fetch('/api/contacts/scan')
+      .then(r => r.json())
+      .then(d => {
+        btn.disabled = false;
+        btn.textContent = '📡 Scan for Repeaters';
+
+        if (!d.ok || !d.contacts || !d.contacts.length) {
+          wrap.style.display = 'block';
+          list.innerHTML = '<div class="empty">No contacts found. Repeaters advertise every few minutes — wait and scan again.</div>';
+          return;
+        }
+
+        wrap.style.display = 'block';
+        list.innerHTML = d.contacts.map(c => {
+          const isRep = c.type === 2;
+          return `<div class="contact-card" onclick="addScannedContact('${esc(c.name)}','${c.key}')">
+            <div class="contact-icon ${isRep ? 'rep' : 'node'}">${isRep ? '📡' : '📱'}</div>
+            <div style="flex:1;min-width:0">
+              <div class="contact-name">${esc(c.name) || '(unnamed)'}</div>
+              <div class="contact-meta">${c.type_name}${c.lat ? ' · ' + c.lat.toFixed(4) + ', ' + c.lon.toFixed(4) : ''}</div>
+              <div class="contact-key">${c.key.substring(0, 32)}...</div>
+            </div>
+          </div>`;
+        }).join('');
+      })
+      .catch(e => {
+        btn.disabled = false;
+        btn.textContent = '📡 Scan for Repeaters';
+        wrap.style.display = 'block';
+        list.innerHTML = `<div class="empty">Scan error: ${e}</div>`;
+      });
+  }
+
+  function esc(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  function addScannedContact(name, key) {
+    // Highlight the selected card
+    document.querySelectorAll('.contact-card').forEach(c => c.classList.remove('selected'));
+    event.currentTarget.classList.add('selected');
+
+    // Add directly as repeater
+    fetch('/api/repeaters/add', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({name, key})
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) {
+        loadRepeaters();
+        // Auto-hide scan results after a moment
+        setTimeout(() => {
+          document.getElementById('scan-results').style.display = 'none';
+        }, 1500);
+      } else if (d.msg && d.msg.includes('already exists')) {
+        // Already saved — just select it
+        loadRepeaters();
+      } else {
+        alert(d.msg || 'Could not add repeater');
+      }
+    });
   }
 
   // ── REPEATER MANAGER ───────────────────────────────────────────────────────
@@ -362,7 +576,6 @@
 
   // ── RESET DISPLAY ──────────────────────────────────────────────────────────
   function resetUI() {
-    // Status card
     const pill = document.getElementById('pill');
     pill.className   = 'pill pn';
     pill.textContent = 'Idle';
@@ -371,32 +584,25 @@
     document.getElementById('gps').textContent     = 'No fix';
     document.getElementById('dot').classList.remove('on');
     document.getElementById('logfile').textContent = '—';
-
-    // Last ping
     const st = document.getElementById('snr-t');
     const sb = document.getElementById('snr-b');
     st.textContent = '—'; st.className = 'snr-val sn';
     sb.textContent = '—'; sb.className = 'snr-val sn';
     document.getElementById('dur').textContent   = '—';
     document.getElementById('ptime').textContent = '—';
-
-    // Live feed
     document.getElementById('feed').innerHTML =
       '<div class="empty">Start logging to see live pings</div>';
-
-    // Buttons
     document.getElementById('bstart').disabled = false;
     document.getElementById('bstop').disabled  = true;
     document.getElementById('bdl').disabled    = true;
-
-    // Repeater section is intentionally untouched
   }
 
-  // ── INIT & POLLING ─────────────────────────────────────────────────────────
+  // ── INIT ───────────────────────────────────────────────────────────────────
   poll();
   pollPings();
   pollFiles();
   loadRepeaters();
+  readRadio();  // Auto-read radio on page load
 
   setInterval(poll,          3000);
   setInterval(pollPings,     3000);
