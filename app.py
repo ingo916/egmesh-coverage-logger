@@ -15,7 +15,8 @@ from flask import Flask, jsonify, send_file, request
 GPS_BAUD      = 9600
 PING_INTERVAL = 30
 LOG_DIR       = os.path.expanduser("~/egmesh_logs")
-CONFIG_FILE   = os.path.expanduser("~/egmesh_logger/repeaters.json")
+APP_DIR       = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE   = os.path.join(APP_DIR, "repeaters.json")
 # ─────────────────────────────────────────────────────────────────────────────
 
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -176,7 +177,7 @@ def logger_loop():
 # ── ROUTES: CORE ──────────────────────────────────────────────────────────────
 @app.route("/")
 def index():
-    return open(os.path.join(os.path.dirname(__file__),"index.html")).read()
+    return open(os.path.join(APP_DIR, "index.html")).read()
 
 @app.route("/api/start", methods=["POST"])
 def start():

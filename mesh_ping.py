@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 EGMESH Coverage Logger — Ping/SNR Module (v3)
@@ -10,12 +9,15 @@ Features:
     - Read device info and radio config
     - Scan contacts from device
     - Configure radio settings and reboot from web UI
+    - Falls back to raw public key if repeater not in device contacts
 """
 
 import asyncio
 import csv
 import glob
+import json
 import logging
+import os
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -49,6 +51,17 @@ def _find_serial_port():
         logger.debug("Candidate MeshCore port: %s", port)
         return port
     return None
+
+
+def _get_config_path():
+    """Find repeaters.json — check working dir first, then ~/egmesh_logger/."""
+    local = os.path.join(os.path.dirname(os.path.abspath(__file__)), "repeaters.json")
+    if os.path.exists(local):
+        return local
+    fallback = os.path.expanduser("~/egmesh_logger/repeaters.json")
+    if os.path.exists(fallback):
+        return fallback
+    return local  # default to local even if not found yet
 
 
 # ──────────────────────────────────────────────────
@@ -218,7 +231,6 @@ class MeshPinger:
         """
         mc = await self._ensure_connected()
 
-        # Subscribe to SELF_INFO before sending appstart
         info_event = asyncio.Event()
         info_data = {}
 
@@ -229,12 +241,10 @@ class MeshPinger:
         sub_handle = mc.subscribe(EventType.SELF_INFO, on_self_info)
 
         try:
-            # Re-send appstart to trigger fresh SELF_INFO
             await mc.commands.send_appstart()
             await asyncio.wait_for(info_event.wait(), timeout=5)
             self._self_info = info_data
         except asyncio.TimeoutError:
-            # Fall back to cached info
             if self._self_info:
                 info_data = self._self_info
             else:
@@ -254,16 +264,13 @@ class MeshPinger:
         if not port:
             return {"ok": False, "error": "No MeshCore device found"}
 
-        # Disconnect so meshcli can use the serial port
         await self._disconnect()
         await asyncio.sleep(1)
 
-        # Use meshcli to set radio and reboot
         radio_str = f"{freq},{bw},{sf},{cr}"
         logger.info("Configuring radio: %s on %s", radio_str, port)
 
         try:
-            # Send commands via meshcli stdin
             commands = f"/set radio {radio_str}\n/reboot\nquit\n"
             rc, stdout, stderr = _shell(
                 f'echo "{commands}" | timeout 15 meshcli -s {port}',
@@ -277,11 +284,9 @@ class MeshPinger:
         except Exception as e:
             return {"ok": False, "error": f"Failed to run meshcli: {e}"}
 
-        # Wait for device to reboot
         logger.info("Waiting for device to reboot...")
         await asyncio.sleep(6)
 
-        # Try to reconnect to verify
         try:
             mc = await self._ensure_connected()
             info = await self.get_device_info()
@@ -332,7 +337,7 @@ class MeshPinger:
 
     # ──────────────────────────────────────────
     #  Public properties
-    # ─��────────────────────────────────────────
+    # ──────────────────────────────────────────
 
     async def disconnect(self):
         await self._disconnect()
@@ -402,31 +407,52 @@ class MeshPinger:
             return mc
 
     async def _find_repeater(self, mc: MeshCore):
+        """
+        Find repeater by name in device contacts.
+        Falls back to raw public key from repeaters.json if not found.
+        """
         if self._repeater_contact is not None:
             return self._repeater_contact
 
+        # Try device contact list first
         result = await mc.commands.get_contacts()
-        if result.type == EventType.ERROR:
-            raise RuntimeError(f"Failed to load contacts: {result.payload}")
+        if result.type != EventType.ERROR:
+            contacts = result.payload
+            # Exact match
+            for pubkey, contact in contacts.items():
+                name = contact.get("adv_name", "")
+                if name == self.repeater_name:
+                    self._repeater_contact = contact
+                    logger.info("Found repeater (exact): %s", name)
+                    return contact
+            # Substring match
+            for pubkey, contact in contacts.items():
+                name = contact.get("adv_name", "")
+                if self.repeater_name.lower() in name.lower():
+                    self._repeater_contact = contact
+                    logger.info("Found repeater (substring): %s", name)
+                    return contact
 
-        contacts = result.payload
-        for pubkey, contact in contacts.items():
-            name = contact.get("adv_name", "")
-            if name == self.repeater_name:
-                self._repeater_contact = contact
-                logger.info("Found repeater (exact): %s", name)
-                return contact
-
-        for pubkey, contact in contacts.items():
-            name = contact.get("adv_name", "")
-            if self.repeater_name.lower() in name.lower():
-                self._repeater_contact = contact
-                logger.info("Found repeater (substring): %s", name)
-                return contact
+        # Fall back to raw public key from repeaters.json
+        cfg_path = _get_config_path()
+        try:
+            with open(cfg_path) as f:
+                cfg = json.load(f)
+            active = next(
+                (r for r in cfg["repeaters"] if r["id"] == cfg.get("active")),
+                None,
+            )
+            if active and active.get("key"):
+                key = active["key"]
+                logger.info("Using raw public key for '%s': %s...",
+                            active["name"], key[:16])
+                self._repeater_contact = key
+                return key
+        except Exception as e:
+            logger.debug("Could not read repeaters.json: %s", e)
 
         raise RuntimeError(
-            f"Repeater '{self.repeater_name}' not found among "
-            f"{len(contacts)} contacts"
+            f"Repeater '{self.repeater_name}' not found in contacts or config"
         )
 
     async def _disconnect(self):
