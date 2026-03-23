@@ -1,12 +1,14 @@
 [Unit]
 Description=EGMESH Coverage Logger
-After=network.target
+After=bluetooth.target network.target
 
 [Service]
-User=pi
+Type=simple
+User=root
+Environment=HOME=/home/pi
 WorkingDirectory=/home/pi/egmesh_logger
-ExecStart=/home/pi/egmesh_logger/venv/bin/python app.py
-Restart=always
+ExecStart=/home/pi/egmesh_logger/venv/bin/python3 /home/pi/egmesh_logger/app.py
+Restart=on-failure
 RestartSec=5
 
 [Install]
