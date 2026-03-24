@@ -365,4 +365,4 @@ def delete_repeater():
 
 if __name__ == "__main__":
     print("EGMESH Logger → http://192.168.4.1:5000")
-    app.run(host="0.0.0.0", port=5000, threaded=True, ssl_context='adhoc')
+    app.run(host="0.0.0.0", port=5000, threaded=True, ssl_context=('cert.pem', 'key.pem'))
