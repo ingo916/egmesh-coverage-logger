@@ -10,6 +10,7 @@ Features:
     - Scan contacts from device
     - Configure radio settings and reboot from web UI
     - Falls back to raw public key if repeater not in device contacts
+    - Push contacts to device from web UI (add_contact_to_device)
 """
 
 import asyncio
@@ -61,7 +62,7 @@ def _get_config_path():
     fallback = os.path.expanduser("~/egmesh_logger/repeaters.json")
     if os.path.exists(fallback):
         return fallback
-    return local  # default to local even if not found yet
+    return local
 
 
 # ──────────────────────────────────────────────────
@@ -304,7 +305,7 @@ class MeshPinger:
             }
 
     # ──────────────────────────────────────────
-    #  Public API — Contact Scanning
+    #  Public API — Contact Scanning & Adding
     # ──────────────────────────────────────────
 
     async def scan_contacts(self) -> list:
@@ -334,6 +335,26 @@ class MeshPinger:
 
         logger.info("Scanned %d contacts", len(contacts))
         return contacts
+
+    async def add_contact_to_device(self, name: str, key: str, contact_type: int = 2) -> dict:
+        """
+        Push a contact into the MeshCore device's internal contact list.
+        contact_type: 0=Node, 1=Client, 2=Repeater, 3=Bridge
+        Returns {"ok": True} or {"ok": False, "error": "..."}.
+        """
+        mc = await self._ensure_connected()
+        try:
+            result = await mc.commands.update_contact(
+                key, adv_name=name, type=contact_type
+            )
+            if result and result.type == EventType.ERROR:
+                return {"ok": False, "error": str(result.payload)}
+            self._repeater_contact = None  # force re-lookup on next ping
+            logger.info("Added contact to device: %s (%s...)", name, key[:16])
+            return {"ok": True}
+        except Exception as e:
+            logger.error("add_contact_to_device failed: %s", e)
+            return {"ok": False, "error": str(e)}
 
     # ──────────────────────────────────────────
     #  Public properties

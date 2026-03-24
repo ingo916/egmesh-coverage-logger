@@ -576,25 +576,27 @@
 
   // ── RESET DISPLAY ──────────────────────────────────────────────────────────
   function resetUI() {
-    const pill = document.getElementById('pill');
-    pill.className   = 'pill pn';
-    pill.textContent = 'Idle';
-    document.getElementById('stage').textContent   = '—';
-    document.getElementById('count').textContent   = '0';
-    document.getElementById('gps').textContent     = 'No fix';
-    document.getElementById('dot').classList.remove('on');
-    document.getElementById('logfile').textContent = '—';
-    const st = document.getElementById('snr-t');
-    const sb = document.getElementById('snr-b');
-    st.textContent = '—'; st.className = 'snr-val sn';
-    sb.textContent = '—'; sb.className = 'snr-val sn';
-    document.getElementById('dur').textContent   = '—';
-    document.getElementById('ptime').textContent = '—';
-    document.getElementById('feed').innerHTML =
-      '<div class="empty">Start logging to see live pings</div>';
-    document.getElementById('bstart').disabled = false;
-    document.getElementById('bstop').disabled  = true;
-    document.getElementById('bdl').disabled    = true;
+    fetch('/api/reset', {method:'POST'}).then(() => {
+      const pill = document.getElementById('pill');
+      pill.className   = 'pill pn';
+      pill.textContent = 'Idle';
+      document.getElementById('stage').textContent   = '—';
+      document.getElementById('count').textContent   = '0';
+      document.getElementById('gps').textContent     = 'No fix';
+      document.getElementById('dot').classList.remove('on');
+      document.getElementById('logfile').textContent = '—';
+      const st = document.getElementById('snr-t');
+      const sb = document.getElementById('snr-b');
+      st.textContent = '—'; st.className = 'snr-val sn';
+      sb.textContent = '—'; sb.className = 'snr-val sn';
+      document.getElementById('dur').textContent   = '—';
+      document.getElementById('ptime').textContent = '—';
+      document.getElementById('feed').innerHTML =
+        '<div class="empty">Start logging to see live pings</div>';
+      document.getElementById('bstart').disabled = false;
+      document.getElementById('bstop').disabled  = true;
+      document.getElementById('bdl').disabled    = true;
+    });
   }
 
   // ── INIT ───────────────────────────────────────────────────────────────────

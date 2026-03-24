@@ -192,6 +192,13 @@ def stop():
     stop_event.set(); state["running"]=False; state["status"]="Stopping..."
     return jsonify({"ok":True})
 
+@app.route("/api/reset", methods=["POST"])
+def reset():
+    state.update(running=False, log_file=None, ping_count=0,
+                 last_ping=None, last_gps={"lat":None,"lon":None}, status="Idle")
+    recent_pings.clear()
+    return jsonify({"ok":True})
+
 @app.route("/api/status")
 def status():
     cfg = load_config()
@@ -231,7 +238,6 @@ def dl_file(fn):
 # ── ROUTES: RADIO CONFIGURATION ───────────────────────────────────────────────
 @app.route("/api/radio", methods=["GET"])
 def get_radio():
-    """Get current radio settings from the device."""
     try:
         info = _run_async(_pinger.get_device_info(), timeout=15)
         return jsonify({
@@ -248,16 +254,13 @@ def get_radio():
 
 @app.route("/api/radio", methods=["POST"])
 def set_radio():
-    """Set radio parameters and reboot the device."""
     data = request.get_json()
     freq = data.get("freq")
     bw = data.get("bw")
     sf = data.get("sf")
     cr = data.get("cr")
-
     if not all([freq, bw, sf, cr]):
         return jsonify({"ok": False, "error": "freq, bw, sf, and cr are all required"}), 400
-
     try:
         freq = float(freq)
         bw = float(bw)
@@ -265,12 +268,8 @@ def set_radio():
         cr = int(cr)
     except ValueError:
         return jsonify({"ok": False, "error": "Invalid number format"}), 400
-
     try:
-        result = _run_async(
-            _pinger.configure_radio(freq, bw, sf, cr),
-            timeout=30,
-        )
+        result = _run_async(_pinger.configure_radio(freq, bw, sf, cr), timeout=30)
         return jsonify(result)
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -278,7 +277,6 @@ def set_radio():
 # ── ROUTES: CONTACT SCANNING ─────────────────────────────────────────────────
 @app.route("/api/contacts/scan", methods=["GET"])
 def scan_contacts():
-    """Scan for contacts from the device."""
     try:
         contacts = _run_async(_pinger.scan_contacts(), timeout=15)
         return jsonify({"ok": True, "contacts": contacts})
@@ -305,6 +303,11 @@ def add_repeater():
     if not cfg["active"]:
         cfg["active"] = new_id
     save_config(cfg)
+    # Also push contact to the MeshCore device
+    try:
+        _run_async(_pinger.add_contact_to_device(name, key, contact_type=2), timeout=10)
+    except Exception:
+        pass  # Non-fatal — device may not be connected yet
     return jsonify({"ok":True,"id":new_id})
 
 @app.route("/api/repeaters/select", methods=["POST"])
