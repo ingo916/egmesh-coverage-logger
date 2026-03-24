@@ -229,6 +229,7 @@
   <!-- PAST LOGS -->
   <div class="card">
     <h2>Past Logs</h2>
+    <button class="btn bd" style="margin-bottom:10px;font-size:13px;padding:10px" onclick="clearLogs()">🗑 Clear All Logs</button>
     <div id="flist"><div class="empty">Loading...</div></div>
   </div>
 
@@ -626,6 +627,11 @@
   }
 
   startPhoneGps();
+
+  function clearLogs() {
+    if (!confirm('Delete all log files?')) return;
+    fetch('/api/files/clear', {method:'POST'}).then(() => pollFiles());
+  }
 
   // ── INIT ───────────────────────────────────────────────────────────────────
   poll();

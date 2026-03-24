@@ -267,6 +267,15 @@ def dl_file(fn):
     p = os.path.join(LOG_DIR, fn)
     return send_file(p, as_attachment=True) if os.path.exists(p) else (jsonify({"error":"Not found"}),404)
 
+@app.route("/api/files/clear", methods=["POST"])
+def clear_files():
+    import glob as g
+    current = os.path.basename(state["log_file"]) if state["log_file"] else None
+    for f in g.glob(os.path.join(LOG_DIR, "*.csv")):
+        if os.path.basename(f) != current:
+            os.remove(f)
+    return jsonify({"ok": True})
+
 # ── ROUTES: RADIO CONFIGURATION ───────────────────────────────────────────────
 @app.route("/api/radio", methods=["GET"])
 def get_radio():
