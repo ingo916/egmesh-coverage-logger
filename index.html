@@ -230,6 +230,7 @@
   <div class="card">
     <h2>Past Logs</h2>
     <button class="btn bd" style="margin-bottom:10px;font-size:13px;padding:10px" onclick="clearLogs()">🗑 Clear All Logs</button>
+    <button class="btn bg" style="margin-bottom:10px;font-size:13px;padding:10px" onclick="genHeatmap()">🗺 Generate Heatmap</button>
     <div id="flist"><div class="empty">Loading...</div></div>
   </div>
 
@@ -631,6 +632,23 @@
   function clearLogs() {
     if (!confirm('Delete all log files?')) return;
     fetch('/api/files/clear', {method:'POST'}).then(() => pollFiles());
+  }
+
+  function genHeatmap() {
+    fetch('/api/heatmap', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({})
+    }).then(r => {
+      if (!r.ok) return r.json().then(d => alert(d.error || 'Failed'));
+      return r.blob();
+    }).then(blob => {
+      if (!blob) return;
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'heatmap.html';
+      a.click();
+    }).catch(e => alert('Heatmap error: ' + e));
   }
 
   // ── INIT ───────────────────────────────────────────────────────────────────

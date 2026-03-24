@@ -267,6 +267,57 @@ def dl_file(fn):
     p = os.path.join(LOG_DIR, fn)
     return send_file(p, as_attachment=True) if os.path.exists(p) else (jsonify({"error":"Not found"}),404)
 
+@app.route("/api/heatmap", methods=["POST"])
+def gen_heatmap():
+    """Generate heatmap from all CSV files or a specific one."""
+    import glob as g
+    data = request.get_json(silent=True) or {}
+    fn = data.get("file")
+    if fn:
+        files = [os.path.join(LOG_DIR, fn)]
+    else:
+        files = sorted(g.glob(os.path.join(LOG_DIR, "*.csv")))
+    if not files:
+        return jsonify({"ok": False, "error": "No log files"}), 404
+    try:
+        import pandas as pd
+        import folium
+        from folium.plugins import HeatMap
+        rows = []
+        for f in files:
+            try:
+                df = pd.read_csv(f)
+                rows.append(df)
+            except Exception:
+                continue
+        if not rows:
+            return jsonify({"ok": False, "error": "No valid data"}), 404
+        df = pd.concat(rows, ignore_index=True)
+        df = df.dropna(subset=["latitude","longitude"])
+        df = df[(df["latitude"] != "") & (df["longitude"] != "")]
+        df["latitude"] = df["latitude"].astype(float)
+        df["longitude"] = df["longitude"].astype(float)
+        if df.empty:
+            return jsonify({"ok": False, "error": "No GPS data in logs"}), 404
+        center = [df["latitude"].mean(), df["longitude"].mean()]
+        m = folium.Map(
+            location=center, zoom_start=14,
+            tiles='https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+            attr='&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
+        )
+        snr_col = "snr_there_dB" if "snr_there_dB" in df.columns else None
+        if snr_col:
+            df[snr_col] = pd.to_numeric(df[snr_col], errors="coerce").fillna(0)
+            heat = df[["latitude","longitude",snr_col]].values.tolist()
+        else:
+            heat = df[["latitude","longitude"]].values.tolist()
+        HeatMap(heat, radius=18, blur=22).add_to(m)
+        out = os.path.join(LOG_DIR, "heatmap.html")
+        m.save(out)
+        return send_file(out, as_attachment=True, download_name="heatmap.html")
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 @app.route("/api/files/clear", methods=["POST"])
 def clear_files():
     import glob as g
