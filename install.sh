@@ -4,7 +4,7 @@
 set -e
 
 echo ""
-echo "  EGMESH Coverage Logger - Installer v2.1"
+echo "  EGMESH Coverage Logger - Installer v3.1"
 echo "  https://egmesh.net"
 echo ""
 
@@ -32,7 +32,20 @@ echo "  Creating Python virtual environment..."
 python3 -m venv "$INSTALL_DIR/venv"
 "$INSTALL_DIR/venv/bin/pip" install --upgrade pip --quiet
 echo "  Installing dependencies..."
-"$INSTALL_DIR/venv/bin/pip" install flask meshcore pynmea2 pyserial folium pandas --quiet
+"$INSTALL_DIR/venv/bin/pip" install flask meshcore meshcore-cli pynmea2 pyserial pyopenssl folium pandas --quiet
+
+# ── SSL certificate (required for phone GPS) ─────────────────────────────────
+if [ ! -f "$INSTALL_DIR/cert.pem" ]; then
+    echo "  Generating SSL certificate for phone GPS..."
+    openssl req -x509 -newkey rsa:2048 \
+        -keyout "$INSTALL_DIR/key.pem" \
+        -out "$INSTALL_DIR/cert.pem" \
+        -days 3650 -nodes \
+        -subj "/CN=EGMESH" 2>/dev/null
+    echo "  SSL certificate created"
+else
+    echo "  SSL certificate already exists"
+fi
 
 # ── Systemd service ───────────────────────────────────────────────────────────
 echo "  Installing systemd service..."
@@ -69,22 +82,28 @@ echo "  │                                                     │"
 echo "  │  2. Plug the device into the Pi via USB             │"
 echo "  │     (auto-detected, no pairing needed)              │"
 echo "  │                                                     │"
-echo "  │  3. Configure radio (one time):                     │"
-echo "  │     pip install meshcore-cli                        │"
-echo "  │     meshcli -s /dev/ttyACM0                         │"
-echo "  │     /set radio 910.525,125,9,5                      │"
-echo "  │     /reboot                                         │"
-echo "  │                                                     │"
-echo "  │  4. Edit mesh_ping.py:                              │"
-echo "  │     REPEATER_NAME = 'your repeater name'            │"
-echo "  │                                                     │"
-echo "  │  5. Set up Wi-Fi hotspot (optional):                │"
-echo "  │     sudo ./setup_hotspot.sh                         │"
-echo "  │                                                     │"
-echo "  │  6. Start the service:                              │"
+echo "  │  3. Start the service:                              │"
 echo "  │     sudo systemctl start egmesh                     │"
 echo "  │                                                     │"
-echo "  │  Web UI: http://192.168.4.1:5000                    │"
+echo "  │  4. Open the web UI from your phone:                │"
+echo "  │     https://<pi-ip>:5000                            │"
+echo "  │     (accept the certificate warning)                │"
+echo "  │                                                     │"
+echo "  │  5. Configure radio from the web UI                 │"
+echo "  │     (Radio Configuration panel)                     │"
+echo "  │                                                     │"
+echo "  │  6. Scan for repeaters or add manually              │"
+echo "  │     (Repeater panel)                                │"
+echo "  │                                                     │"
+echo "  │  7. Tap Start Logging                               │"
+echo "  │                                                     │"
+echo "  │  GPS: Phone GPS is used automatically via browser.  │"
+echo "  │  USB GPS dongle takes priority if plugged in.       │"
+echo "  │                                                     │"
+echo "  │  Optional: Set up Wi-Fi hotspot for field use:      │"
+echo "  │     sudo ./setup_hotspot.sh                         │"
+echo "  │     Then connect to EGMESH-LOGGER (pw: egmesh2025)  │"
+echo "  │     Web UI: https://192.168.4.1:5000                │"
 echo "  └─────────────────────────────────────────────────────┘"
 echo ""
 echo "  Created by Ingo Azarvand for EGMESH.NET - Elk Grove, CA"
