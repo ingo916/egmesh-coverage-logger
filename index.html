@@ -268,8 +268,9 @@
       document.getElementById('count').textContent = d.ping_count;
       const g = d.last_gps, dot = document.getElementById('dot');
       if (g && g.lat) {
+        const src = d.gps_source === 'phone' ? ' (phone)' : d.gps_source === 'usb' ? ' (USB)' : '';
         document.getElementById('gps').textContent =
-          g.lat.toFixed(5) + ', ' + g.lon.toFixed(5);
+          g.lat.toFixed(5) + ', ' + g.lon.toFixed(5) + src;
         dot.classList.add('on');
       } else {
         document.getElementById('gps').textContent = 'No fix';
@@ -598,6 +599,33 @@
       document.getElementById('bdl').disabled    = true;
     });
   }
+
+  // ── PHONE GPS ──────────────────────────────────────────────────────────────
+  // Sends phone's GPS to the Pi as a fallback when no USB GPS dongle is present
+  let phoneGpsActive = false;
+
+  function startPhoneGps() {
+    if (!navigator.geolocation) return;
+    phoneGpsActive = true;
+    navigator.geolocation.watchPosition(
+      function(pos) {
+        fetch('/api/gps', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            lat: pos.coords.latitude,
+            lon: pos.coords.longitude,
+          })
+        }).catch(() => {});
+      },
+      function(err) {
+        console.log('Phone GPS error:', err.message);
+      },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+    );
+  }
+
+  startPhoneGps();
 
   // ── INIT ───────────────────────────────────────────────────────────────────
   poll();

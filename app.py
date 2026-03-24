@@ -76,6 +76,9 @@ state = {"running":False,"log_file":None,"ping_count":0,
 recent_pings = deque(maxlen=100)
 stop_event   = threading.Event()
 
+# Phone GPS state — updated by the web UI via /api/gps
+phone_gps = {"lat": None, "lon": None, "updated": 0}
+
 # ── GPS ───────────────────────────────────────────────────────────────────────
 def _find_gps_port():
     """Auto-detect GPS serial port by checking USB vendor/product IDs."""
@@ -93,22 +96,28 @@ def _find_gps_port():
     return None
 
 def read_gps():
+    """Read GPS — tries USB dongle first, falls back to phone GPS."""
+    # Try USB GPS dongle first
     try:
         import serial, pynmea2
         gps_port = _find_gps_port()
-        if not gps_port:
-            return None, None
-        with serial.Serial(gps_port, GPS_BAUD, timeout=5) as ser:
-            deadline = time.time() + 6
-            while time.time() < deadline:
-                line = ser.readline().decode("ascii", errors="replace").strip()
-                if line.startswith(("$GPRMC","$GPGGA","$GNRMC","$GNGGA")):
-                    try:
-                        msg = pynmea2.parse(line)
-                        if hasattr(msg,"latitude") and msg.latitude:
-                            return round(msg.latitude,7), round(msg.longitude,7)
-                    except Exception: continue
+        if gps_port:
+            with serial.Serial(gps_port, GPS_BAUD, timeout=5) as ser:
+                deadline = time.time() + 6
+                while time.time() < deadline:
+                    line = ser.readline().decode("ascii", errors="replace").strip()
+                    if line.startswith(("$GPRMC","$GPGGA","$GNRMC","$GNGGA")):
+                        try:
+                            msg = pynmea2.parse(line)
+                            if hasattr(msg,"latitude") and msg.latitude:
+                                return round(msg.latitude,7), round(msg.longitude,7)
+                        except Exception: continue
     except Exception: pass
+
+    # Fall back to phone GPS (if received within last 30 seconds)
+    if phone_gps["lat"] and (time.time() - phone_gps["updated"]) < 30:
+        return phone_gps["lat"], phone_gps["lon"]
+
     return None, None
 
 # ── PING ──────────────────────────────────────────────────────────────────────
@@ -203,12 +212,35 @@ def reset():
 def status():
     cfg = load_config()
     active = next((r for r in cfg["repeaters"] if r["id"] == cfg.get("active")), None)
+    gps_source = "none"
+    if _find_gps_port():
+        gps_source = "usb"
+    elif phone_gps["lat"] and (time.time() - phone_gps["updated"]) < 30:
+        gps_source = "phone"
     return jsonify({
         **state,
         "log_file": os.path.basename(state["log_file"]) if state["log_file"] else None,
         "active_repeater": active,
         "connected": _pinger.is_connected,
+        "gps_source": gps_source,
     })
+
+# ── ROUTES: PHONE GPS ────────────────────────────────────────────────────────
+@app.route("/api/gps", methods=["POST"])
+def receive_phone_gps():
+    """Receive GPS coordinates from phone browser."""
+    data = request.get_json(silent=True) or {}
+    lat = data.get("lat")
+    lon = data.get("lon")
+    if lat is not None and lon is not None:
+        try:
+            phone_gps["lat"] = round(float(lat), 7)
+            phone_gps["lon"] = round(float(lon), 7)
+            phone_gps["updated"] = time.time()
+            return jsonify({"ok": True})
+        except (ValueError, TypeError):
+            return jsonify({"ok": False, "error": "Invalid coordinates"}), 400
+    return jsonify({"ok": False, "error": "lat and lon required"}), 400
 
 @app.route("/api/ping", methods=["POST","GET"])
 def api_ping():
@@ -303,11 +335,10 @@ def add_repeater():
     if not cfg["active"]:
         cfg["active"] = new_id
     save_config(cfg)
-    # Also push contact to the MeshCore device
     try:
         _run_async(_pinger.add_contact_to_device(name, key, contact_type=2), timeout=10)
     except Exception:
-        pass  # Non-fatal — device may not be connected yet
+        pass
     return jsonify({"ok":True,"id":new_id})
 
 @app.route("/api/repeaters/select", methods=["POST"])
@@ -334,4 +365,4 @@ def delete_repeater():
 
 if __name__ == "__main__":
     print("EGMESH Logger → http://192.168.4.1:5000")
-    app.run(host="0.0.0.0", port=5000, threaded=True)
+    app.run(host="0.0.0.0", port=5000, threaded=True, ssl_context='adhoc')
