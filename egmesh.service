@@ -5,9 +5,9 @@ After=network.target
 [Service]
 Type=simple
 User=root
-Environment=HOME=/home/pi
-WorkingDirectory=/home/pi/egmesh_logger
-ExecStart=/home/pi/egmesh_logger/venv/bin/python3 /home/pi/egmesh_logger/app.py
+Environment=HOME=/root
+WorkingDirectory=/root/egmesh_logger
+ExecStart=/root/egmesh_logger/venv/bin/python3 /root/egmesh_logger/app.py
 Restart=on-failure
 RestartSec=5
 

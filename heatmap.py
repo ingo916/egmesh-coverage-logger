@@ -10,9 +10,9 @@
 # EGMESH.NET Radio Settings:
 #   Frequency : 910.525 MHz
 #   Bandwidth : 125 kHz
-#   SF        : 9
+#   SF        : 10
 #   CR        : 4/5
-#   TX Power  : 20 dBm
+#   TX Power  : 22 dBm
 #
 # Usage:
 #   python heatmap.py                          # auto-finds newest CSV
@@ -194,7 +194,7 @@ def generate_heatmap(csv_files, output_path):
       <div><span style="color:#484f58">●</span> &nbsp;No response</div>
       <hr style="border-color:#30363d;margin:8px 0">
       <div style="color:#8b949e;font-size:10px">
-        910.525 MHz · SF9 · BW125 · CR4/5<br>
+        910.525 MHz · SF10 · BW125 · CR4/5<br>
         egmesh.net · Elk Grove, CA
       </div>
     </div>

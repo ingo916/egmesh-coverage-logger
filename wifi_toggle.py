@@ -84,6 +84,8 @@ def switch_to_hotspot():
         f'nmcli device wifi hotspot ifname wlan0 ssid "{HOTSPOT_SSID}" password "{HOTSPOT_PASS}"'
     )
     if rc == 0:
+        # Disable autoconnect so hotspot doesn't start automatically on boot
+        shell("sudo nmcli connection modify Hotspot connection.autoconnect no")
         logger.info("HOTSPOT active: %s (pw: %s)", HOTSPOT_SSID, HOTSPOT_PASS)
         blink_led(3, 0.3)  # 3 slow blinks = hotspot on
     else:
@@ -95,8 +97,8 @@ def switch_to_wifi():
     logger.info("Switching to HOME WiFi...")
     blink_led(2, 0.1)  # 2 quick blinks = switching
 
-    # Stop hotspot
-    shell("nmcli device disconnect wlan0")
+    # Bring down the hotspot connection entirely (not just disconnect the device)
+    shell("nmcli connection down Hotspot")
     time.sleep(2)
 
     # Reconnect to saved WiFi

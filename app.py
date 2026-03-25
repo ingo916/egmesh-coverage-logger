@@ -424,5 +424,25 @@ def delete_repeater():
     return jsonify({"ok":True})
 
 if __name__ == "__main__":
-    print("EGMESH Logger → http://192.168.4.1:5000")
-    app.run(host="0.0.0.0", port=5000, threaded=True, ssl_context=('cert.pem', 'key.pem'))
+    from werkzeug.serving import make_server
+    import ssl
+
+    print("EGMESH Logger → https://0.0.0.0:5000  (phone/GPS — HTTPS)")
+    print("EGMESH Logger → http://0.0.0.0:5001   (desktop — HTTP)")
+
+    # ── HTTPS server on :5000 (required for phone geolocation) ───────────────
+    ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ssl_ctx.load_cert_chain('cert.pem', 'key.pem')
+    https_server = make_server('0.0.0.0', 5000, app, ssl_context=ssl_ctx)
+
+    # ── HTTP server on :5001 (desktop — no cert warning) ─────────────────────
+    http_server = make_server('0.0.0.0', 5001, app)
+
+    https_thread = threading.Thread(target=https_server.serve_forever, daemon=True)
+    http_thread  = threading.Thread(target=http_server.serve_forever,  daemon=True)
+
+    https_thread.start()
+    http_thread.start()
+
+    https_thread.join()
+    http_thread.join()
