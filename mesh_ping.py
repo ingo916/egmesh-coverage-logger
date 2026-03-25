@@ -258,36 +258,29 @@ class MeshPinger:
     async def configure_radio(self, freq: float, bw: float, sf: int, cr: int) -> dict:
         """
         Set radio parameters and reboot the device.
-        Disconnects the current session (device reboots).
-        Returns {"ok": True} or {"ok": False, "error": "..."}.
+        Uses meshcore library directly (not meshcli).
         """
-        port = self._serial_port or _find_serial_port()
-        if not port:
-            return {"ok": False, "error": "No MeshCore device found"}
-
-        await self._disconnect()
-        await asyncio.sleep(1)
-
-        radio_str = f"{freq},{bw},{sf},{cr}"
-        logger.info("Configuring radio: %s on %s", radio_str, port)
-
         try:
-            commands = f"/set radio {radio_str}\n/reboot\nquit\n"
-            rc, stdout, stderr = _shell(
-                f'echo "{commands}" | timeout 15 meshcli -s {port}',
-                timeout=20,
-            )
-            logger.info("meshcli output: %s %s", stdout[:200], stderr[:200])
+            mc = await self._ensure_connected()
 
-            if "Error" in stdout or "Error" in stderr:
-                return {"ok": False, "error": f"meshcli error: {stdout} {stderr}"}
+            result = await mc.commands.set_radio(freq, bw, sf, cr)
+            if result.type == EventType.ERROR:
+                return {"ok": False, "error": f"set_radio failed: {result.payload}"}
+
+            logger.info("Radio set to %.3f/%g/%d/%d, saving...", freq, bw, sf, cr)
+            await asyncio.sleep(2)
+
+            await mc.commands.reboot()
+            logger.info("Device rebooting...")
 
         except Exception as e:
-            return {"ok": False, "error": f"Failed to run meshcli: {e}"}
+            return {"ok": False, "error": f"Failed to set radio: {e}"}
 
-        logger.info("Waiting for device to reboot...")
+        # Disconnect and wait for reboot
+        await self._disconnect()
         await asyncio.sleep(6)
 
+        # Reconnect and verify
         try:
             mc = await self._ensure_connected()
             info = await self.get_device_info()

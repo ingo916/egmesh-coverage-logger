@@ -69,6 +69,7 @@ SVCEOF"
 
 sudo systemctl daemon-reload
 sudo systemctl enable egmesh
+sudo systemctl start egmesh
 
 echo ""
 echo "  ┌─────────────────────────────────────────────────────┐"
