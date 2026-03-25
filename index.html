@@ -132,6 +132,19 @@
       <span class="lbl">Log file</span>
       <span id="logfile" class="val" style="font-size:11px;color:#8b949e">—</span>
     </div>
+    <div class="row">
+      <span class="lbl">Ping interval</span>
+      <span class="val">
+        <select id="ping-interval" onchange="setPingInterval(this.value)"
+          style="background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#e6edf3;font-size:13px;padding:3px 8px;font-family:monospace">
+          <option value="5">5 s</option>
+          <option value="10">10 s</option>
+          <option value="15">15 s</option>
+          <option value="20">20 s</option>
+          <option value="30" selected>30 s</option>
+        </select>
+      </span>
+    </div>
   </div>
 
   <!-- LAST PING -->
@@ -559,6 +572,21 @@
     });
   }
 
+  function setPingInterval(val) {
+    fetch('/api/settings', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ping_interval: parseInt(val)})
+    }).catch(() => {});
+  }
+
+  function loadSettings() {
+    fetch('/api/settings').then(r => r.json()).then(d => {
+      const sel = document.getElementById('ping-interval');
+      if (sel) sel.value = d.ping_interval;
+    }).catch(() => {});
+  }
+
   // ── CONTROLS ───────────────────────────────────────────────────────────────
   function apiStart() {
     fetch('/api/start', {method:'POST'})
@@ -657,6 +685,7 @@
   pollFiles();
   loadRepeaters();
   readRadio();  // Auto-read radio on page load
+  loadSettings();
 
   setInterval(poll,          3000);
   setInterval(pollPings,     3000);

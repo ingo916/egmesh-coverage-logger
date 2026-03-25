@@ -13,7 +13,7 @@ from flask import Flask, jsonify, send_file, request
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 GPS_BAUD      = 9600
-PING_INTERVAL = 30
+PING_INTERVAL = 30   # default — configurable from web UI
 LOG_DIR       = os.path.expanduser("~/egmesh_logs")
 APP_DIR       = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE   = os.path.join(APP_DIR, "repeaters.json")
@@ -75,6 +75,7 @@ state = {"running":False,"log_file":None,"ping_count":0,
          "last_ping":None,"last_gps":{"lat":None,"lon":None},"status":"Idle"}
 recent_pings = deque(maxlen=100)
 stop_event   = threading.Event()
+ping_interval = PING_INTERVAL  # mutable at runtime
 
 # Phone GPS state — updated by the web UI via /api/gps
 phone_gps = {"lat": None, "lon": None, "updated": 0}
@@ -179,7 +180,7 @@ def logger_loop():
             state["last_ping"] = row
             recent_pings.appendleft(row)
             state["status"] = "Running"
-            stop_event.wait(timeout=PING_INTERVAL)
+            stop_event.wait(timeout=ping_interval)
 
     state.update(running=False, status="Stopped")
 
@@ -187,6 +188,21 @@ def logger_loop():
 @app.route("/")
 def index():
     return open(os.path.join(APP_DIR, "index.html")).read()
+
+@app.route("/manifest.json")
+def manifest():
+    return jsonify({
+        "name": "EGMESH Coverage Logger",
+        "short_name": "EGMESH",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#0d1117",
+        "theme_color": "#161b22",
+        "icons": [
+            {"src": "/static/icon.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/static/icon.png", "sizes": "512x512", "type": "image/png"}
+        ]
+    })
 
 @app.route("/api/start", methods=["POST"])
 def start():
@@ -205,6 +221,21 @@ def stop():
 def reset():
     state.update(running=False, log_file=None, ping_count=0,
                  last_ping=None, last_gps={"lat":None,"lon":None}, status="Idle")
+
+@app.route("/api/settings", methods=["GET"])
+def get_settings():
+    return jsonify({"ping_interval": ping_interval})
+
+@app.route("/api/settings", methods=["POST"])
+def set_settings():
+    global ping_interval
+    data = request.get_json(silent=True) or {}
+    interval = data.get("ping_interval")
+    allowed  = [5, 10, 15, 20, 30]
+    if interval not in allowed:
+        return jsonify({"ok": False, "error": f"Invalid interval. Must be one of {allowed}"}), 400
+    ping_interval = interval
+    return jsonify({"ok": True, "ping_interval": ping_interval})
     recent_pings.clear()
     return jsonify({"ok":True})
 
