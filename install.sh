@@ -31,10 +31,11 @@ fi
 # ── Python virtual environment ────────────────────────────────────────────────
 echo "  Creating Python virtual environment..."
 python3 -m venv "$INSTALL_DIR/venv"
-"$INSTALL_DIR/venv/bin/pip" install --upgrade pip --quiet
+"$INSTALL_DIR/venv/bin/pip" install --upgrade pip --progress-bar on
 echo "  Installing Python dependencies..."
 "$INSTALL_DIR/venv/bin/pip" install \
-    flask meshcore meshcore-cli pynmea2 pyserial pyopenssl folium pandas --quiet
+    flask meshcore meshcore-cli pynmea2 pyserial pyopenssl folium pandas \
+    --progress-bar on
 
 # ── gpiozero (required for WiFi toggle button) ────────────────────────────────
 echo "  Checking gpiozero..."

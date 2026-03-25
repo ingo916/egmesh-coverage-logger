@@ -153,7 +153,7 @@ The service starts automatically on boot. Both ports are active:
 4. For GPS logging, use `https://10.42.0.1:5000` instead — accept the cert warning once, then grant location permission
 5. Drive or walk the coverage area
 
-> Tip: Bookmark both URLs in Safari after the first visit so you never have to type them again.
+> **Tip — Add to Home Screen:** In Safari, tap the Share button → **Add to Home Screen** → tap Add. The logger opens full screen from your home screen with one tap. Do this once after your first connection and you never have to type the URL again.
 
 ## Connecting from a desktop browser
 
