@@ -97,8 +97,11 @@ def switch_to_wifi():
     logger.info("Switching to HOME WiFi...")
     blink_led(2, 0.1)  # 2 quick blinks = switching
 
-    # Bring down the hotspot connection entirely (not just disconnect the device)
+    # Bring down and delete the hotspot connection profile entirely
+    # Deleting forces NM to fully tear down the AP and release the IP
     shell("nmcli connection down Hotspot")
+    time.sleep(1)
+    shell("nmcli connection delete Hotspot")
     time.sleep(2)
 
     # Reconnect to saved WiFi
