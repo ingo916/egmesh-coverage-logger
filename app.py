@@ -221,6 +221,8 @@ def stop():
 def reset():
     state.update(running=False, log_file=None, ping_count=0,
                  last_ping=None, last_gps={"lat":None,"lon":None}, status="Idle")
+    recent_pings.clear()
+    return jsonify({"ok":True})
 
 @app.route("/api/settings", methods=["GET"])
 def get_settings():
@@ -236,8 +238,6 @@ def set_settings():
         return jsonify({"ok": False, "error": f"Invalid interval. Must be one of {allowed}"}), 400
     ping_interval = interval
     return jsonify({"ok": True, "ping_interval": ping_interval})
-    recent_pings.clear()
-    return jsonify({"ok":True})
 
 @app.route("/api/status")
 def status():
@@ -343,9 +343,10 @@ def gen_heatmap():
         else:
             heat = df[["latitude","longitude"]].values.tolist()
         HeatMap(heat, radius=18, blur=22).add_to(m)
-        out = os.path.join(LOG_DIR, "heatmap.html")
+        base = os.path.splitext(os.path.basename(files[0]))[0]
+        out  = os.path.join(LOG_DIR, f"heatmap_{base}.html")
         m.save(out)
-        return send_file(out, as_attachment=True, download_name="heatmap.html")
+        return send_file(out, as_attachment=True, download_name=f"heatmap_{base}.html")
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
