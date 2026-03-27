@@ -669,12 +669,16 @@
       body: JSON.stringify({})
     }).then(r => {
       if (!r.ok) return r.json().then(d => alert(d.error || 'Failed'));
-      return r.blob();
-    }).then(blob => {
-      if (!blob) return;
+      // Read filename from Content-Disposition header
+      const cd = r.headers.get('Content-Disposition') || '';
+      const match = cd.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+      const filename = match ? match[1].replace(/['"]/g, '') : 'heatmap.html';
+      return r.blob().then(blob => ({ blob, filename }));
+    }).then(result => {
+      if (!result) return;
       const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'heatmap.html';
+      a.href = URL.createObjectURL(result.blob);
+      a.download = result.filename;
       a.click();
     }).catch(e => alert('Heatmap error: ' + e));
   }
