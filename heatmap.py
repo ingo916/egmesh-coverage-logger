@@ -10,9 +10,9 @@
 # EGMESH.NET Radio Settings:
 #   Frequency : 910.525 MHz
 #   Bandwidth : 125 kHz
-#   SF        : 9
+#   SF        : 10
 #   CR        : 4/5
-#   TX Power  : 20 dBm
+#   TX Power  : 22 dBm
 #
 # Usage:
 #   python heatmap.py                          # auto-finds newest CSV
