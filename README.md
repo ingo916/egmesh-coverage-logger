@@ -86,14 +86,12 @@ device, choose **Companion USB**, and flash it.
 ### 2. Install
 
 ```bash
-sudo apt-get install -y git
 git clone https://github.com/ingo916/egmesh-coverage-logger.git
 cd egmesh-coverage-logger
-sudo bash install.sh
+chmod +x install.sh && ./install.sh
 ```
 
 The install script will:
-- Install system prerequisites (git, python3, openssl)
 - Install Python dependencies
 - Generate a self-signed TLS cert (`cert.pem` / `key.pem`) if not present
 - Install and enable `egmesh.service` (logger, HTTPS :5000 + HTTP :5001)
@@ -291,27 +289,18 @@ and opening `http://10.42.0.1:5001` in Safari after connecting.
 
 ---
 
-## Deploying on two Pis
+## Updating
 
-This setup runs identically on both the Pi 4 and Pi Zero 2 WH:
-
-```
-~/egmesh-coverage-logger/   ← git repo (edit files here)
-/root/egmesh_logger/        ← runtime directory (service runs here)
-    cert.pem
-    key.pem
-    repeaters.json
-```
-
-Use the same `install.sh` on each Pi. Radio settings and repeater config
-are identical on both units.
-
-After making changes to repo files, deploy them with:
+To update to the latest version:
 
 ```bash
 cd ~/egmesh-coverage-logger
+git pull origin main
 sudo bash update.sh
 ```
+
+This pulls the latest code from GitHub and deploys it to the runtime
+directory without reinstalling.
 
 ---
 
