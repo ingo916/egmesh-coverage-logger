@@ -12,6 +12,11 @@ echo ""
 INSTALL_DIR="/root/egmesh_logger"
 LOG_DIR="/root/egmesh_logs"
 
+# ── System prerequisites ──────────────────────────────────────────────────────
+echo "  Checking system prerequisites..."
+sudo apt-get update -q
+sudo apt-get install -y -q git openssl python3 python3-venv python3-pip
+
 # ── Create directories ────────────────────────────────────────────────────────
 mkdir -p "$INSTALL_DIR" "$LOG_DIR"
 
@@ -121,7 +126,7 @@ echo "  │  4. Configure radio → add repeater → Start Logging  │"
 echo "  │                                                     │"
 echo "  │  FIELD USE:                                         │"
 echo "  │  Press GPIO 17 once  → hotspot EGMESH-LOGGER        │"
-echo "  │  Connect phone → open http://10.42.0.1:5001         │"
+echo "  │  Connect phone → browser opens logger automatically │"
 echo "  │  Web UI: https://10.42.0.1:5000                     │"
 echo "  │  Double-press GPIO 17 → back to home WiFi           │"
 echo "  └─────────────────────────────────────────────────────┘"

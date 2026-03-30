@@ -86,12 +86,14 @@ device, choose **Companion USB**, and flash it.
 ### 2. Install
 
 ```bash
+sudo apt-get install -y git
 git clone https://github.com/ingo916/egmesh-coverage-logger.git
 cd egmesh-coverage-logger
-chmod +x install.sh && ./install.sh
+sudo bash install.sh
 ```
 
 The install script will:
+- Install system prerequisites (git, python3, openssl)
 - Install Python dependencies
 - Generate a self-signed TLS cert (`cert.pem` / `key.pem`) if not present
 - Install and enable `egmesh.service` (logger, HTTPS :5000 + HTTP :5001)
