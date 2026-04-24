@@ -51,6 +51,14 @@
   .file-item:last-child{border-bottom:none}
   .fn{font-family:monospace;color:#8b949e;font-size:11px}
   .fdl{color:#58a6ff;text-decoration:none}
+  .file-card{padding:10px 0;border-bottom:1px solid #21262d}
+  .file-card:last-child{border-bottom:none}
+  .file-actions{display:flex;gap:6px;margin-top:6px;align-items:center}
+  .file-actions a,.file-actions button{font-size:11px;padding:4px 8px;border-radius:4px;cursor:pointer;text-decoration:none;white-space:nowrap}
+  .file-note{width:100%;padding:6px 8px;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#e6edf3;font-size:12px;margin-top:6px;outline:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+  .file-note:focus{border-color:#58a6ff}
+  .file-note-saved{font-size:10px;color:#3fb950;margin-left:6px;opacity:0;transition:opacity .3s}
+  .file-note-saved.show{opacity:1}
   .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;background:#484f58}
   .dot.on{background:#3fb950;animation:pulse 1.5s infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
@@ -243,8 +251,36 @@
   <div class="card">
     <h2>Past Logs</h2>
     <button class="btn bd" style="margin-bottom:10px;font-size:13px;padding:10px" onclick="clearLogs()">🗑 Clear All Logs</button>
-    <button class="btn bg" style="margin-bottom:10px;font-size:13px;padding:10px" onclick="genHeatmap()">🗺 Generate Heatmap</button>
+    <button class="btn bg" style="margin-bottom:10px;font-size:13px;padding:10px" onclick="genHeatmap()">🗺 Generate Heatmap (All Files)</button>
     <div id="flist"><div class="empty">Loading...</div></div>
+  </div>
+
+  <!-- WIFI SETUP -->
+  <div class="card">
+    <h2>WiFi Setup</h2>
+    <div style="padding:4px 0">
+      <div style="margin-bottom:10px">
+        <span class="lbl">Network name (SSID)</span>
+        <input id="wifi-ssid" class="inp" type="text" placeholder="Enter network name" autocomplete="off">
+      </div>
+      <div style="margin-bottom:10px">
+        <span class="lbl">Password</span>
+        <div style="display:flex;gap:6px">
+          <input id="wifi-pass" class="inp inp-mono" type="password" placeholder="Enter password" autocomplete="off"
+            style="flex:1;margin-bottom:0">
+          <button onclick="wifiToggleVis()" id="wifi-vis-btn"
+            style="background:#21262d;border:1px solid #30363d;border-radius:6px;
+                   color:#8b949e;padding:8px 10px;font-size:12px;cursor:pointer;
+                   white-space:nowrap;height:42px">Show</button>
+        </div>
+        <div style="font-size:11px;color:#484f58;margin-top:4px">Leave blank for open networks</div>
+      </div>
+      <div id="wifi-status" class="radio-status"></div>
+      <button class="btn" onclick="wifiSaveReboot()" id="wifi-btn"
+        style="background:#1a4731;color:#3fb950;border:1px solid #238636;margin-bottom:0">
+        Save &amp; Reboot
+      </button>
+    </div>
   </div>
 
 </div>
@@ -339,20 +375,56 @@
   }
 
   // ── PAST LOGS ──────────────────────────────────────────────────────────────
+  var _fileNotes = {};
+
   function pollFiles() {
-    fetch('/api/files').then(r => r.json()).then(fs => {
-      const el = document.getElementById('flist');
+    Promise.all([
+      fetch('/api/files').then(r => r.json()),
+      fetch('/api/files/notes').then(r => r.json()).catch(() => ({}))
+    ]).then(function(results) {
+      var fs = results[0];
+      _fileNotes = results[1];
+      var el = document.getElementById('flist');
       if (!fs.length) {
         el.innerHTML = '<div class="empty">No logs yet</div>';
         return;
       }
-      el.innerHTML = fs.map(f =>
-        `<div class="file-item">
-          <span class="fn">${f}</span>
-          <a class="fdl" href="/api/download/${f}">Download</a>
-        </div>`
-      ).join('');
-    }).catch(() => {});
+      el.innerHTML = fs.map(function(f) {
+        var note = _fileNotes[f] || '';
+        return '<div class="file-card">' +
+          '<div class="fn">' + esc(f) + '</div>' +
+          '<input class="file-note" type="text" placeholder="Add note (e.g. Downtown library)" ' +
+            'value="' + escapeAttr(note) + '" ' +
+            'onchange="saveNote(\'' + escapeAttr(f) + '\', this)" ' +
+            'data-file="' + escapeAttr(f) + '">' +
+          '<span class="file-note-saved" id="saved-' + escapeAttr(f) + '">Saved</span>' +
+          '<div class="file-actions">' +
+            '<a class="fdl" href="/api/download/' + encodeURIComponent(f) + '">↓ CSV</a>' +
+            '<button onclick="genHeatmap(\'' + escapeAttr(f) + '\')" ' +
+              'style="background:#21262d;border:1px solid #30363d;color:#e6edf3">🗺 Heatmap</button>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }).catch(function() {});
+  }
+
+  function escapeAttr(s) {
+    return s.replace(/&/g,'&amp;').replace(/'/g,'&#39;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  }
+
+  function saveNote(filename, input) {
+    var note = input.value.trim();
+    fetch('/api/files/notes', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({file: filename, note: note})
+    }).then(function() {
+      var el = document.getElementById('saved-' + filename);
+      if (el) {
+        el.classList.add('show');
+        setTimeout(function() { el.classList.remove('show'); }, 1500);
+      }
+    }).catch(function() {});
   }
 
   // ── RADIO CONFIGURATION ────────────────────────────────────────────────────
@@ -662,11 +734,13 @@
     fetch('/api/files/clear', {method:'POST'}).then(() => pollFiles());
   }
 
-  function genHeatmap() {
+  function genHeatmap(file) {
+    var body = file ? {file: file} : {};
+    var label = file ? file : 'all files';
     fetch('/api/heatmap', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({})
+      body: JSON.stringify(body)
     }).then(r => {
       if (!r.ok) return r.json().then(d => alert(d.error || 'Failed'));
       // Read filename from Content-Disposition header
@@ -682,6 +756,67 @@
       a.click();
     }).catch(e => alert('Heatmap error: ' + e));
   }
+
+  // ── WIFI SETUP ─────────────────────────────────────────────────────────────
+  function wifiToggleVis() {
+    var p = document.getElementById('wifi-pass');
+    var b = document.getElementById('wifi-vis-btn');
+    if (p.type === 'password') { p.type = 'text';    b.textContent = 'Hide'; }
+    else                       { p.type = 'password'; b.textContent = 'Show'; }
+  }
+
+  function wifiSaveReboot() {
+    var ssid = document.getElementById('wifi-ssid').value.trim();
+    var pass = document.getElementById('wifi-pass').value;
+    var stat = document.getElementById('wifi-status');
+    var btn  = document.getElementById('wifi-btn');
+
+    if (!ssid) {
+      stat.textContent   = 'Enter a network name.';
+      stat.style.color   = '#f85149';
+      stat.style.display = 'block';
+      return;
+    }
+
+    if (!confirm('Save "' + ssid + '" and reboot the Pi?\n\nYou will lose this connection. After reboot the Pi will connect to the saved network.')) {
+      return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Saving…';
+    stat.style.color   = '#58a6ff';
+    stat.textContent   = 'Saving ' + ssid + '…';
+    stat.style.display = 'block';
+
+    var body = { ssid: ssid };
+    if (pass) body.password = pass;
+
+    fetch('/api/wifi/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.success) {
+        stat.style.color = '#3fb950';
+        stat.textContent = 'Saved! Pi is rebooting…';
+      } else {
+        stat.style.color = '#f85149';
+        stat.textContent = d.error || 'Failed to save network.';
+        btn.disabled    = false;
+        btn.textContent = 'Save & Reboot';
+      }
+    })
+    .catch(function() {
+      stat.style.color = '#3fb950';
+      stat.textContent = 'Pi is rebooting…';
+    });
+  }
+
+  document.getElementById('wifi-pass').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') wifiSaveReboot();
+  });
 
   // ── INIT ───────────────────────────────────────────────────────────────────
   poll();

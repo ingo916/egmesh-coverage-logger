@@ -17,6 +17,7 @@ PING_INTERVAL = 30   # default — configurable from web UI
 LOG_DIR       = os.path.expanduser("~/egmesh_logs")
 APP_DIR       = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE   = os.path.join(APP_DIR, "repeaters.json")
+NOTES_FILE    = os.path.join(LOG_DIR, "file_notes.json")
 # ─────────────────────────────────────────────────────────────────────────────
 
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -357,6 +358,44 @@ def clear_files():
     for f in g.glob(os.path.join(LOG_DIR, "*.csv")):
         if os.path.basename(f) != current:
             os.remove(f)
+    # Clean up notes for deleted files
+    notes = _load_notes()
+    remaining = set(os.listdir(LOG_DIR))
+    notes = {k: v for k, v in notes.items() if k in remaining}
+    _save_notes(notes)
+    return jsonify({"ok": True})
+
+# ── ROUTES: FILE NOTES ────────────────────────────────────────────────────────
+def _load_notes():
+    if os.path.exists(NOTES_FILE):
+        try:
+            with open(NOTES_FILE) as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def _save_notes(notes):
+    with open(NOTES_FILE, "w") as f:
+        json.dump(notes, f, indent=2)
+
+@app.route("/api/files/notes")
+def get_notes():
+    return jsonify(_load_notes())
+
+@app.route("/api/files/notes", methods=["POST"])
+def set_note():
+    data = request.get_json(silent=True) or {}
+    filename = (data.get("file") or "").strip()
+    note = (data.get("note") or "").strip()
+    if not filename:
+        return jsonify({"ok": False, "error": "Filename is required"}), 400
+    notes = _load_notes()
+    if note:
+        notes[filename] = note
+    else:
+        notes.pop(filename, None)
+    _save_notes(notes)
     return jsonify({"ok": True})
 
 # ── ROUTES: RADIO CONFIGURATION ───────────────────────────────────────────────
@@ -455,6 +494,62 @@ def delete_repeater():
     save_config(cfg)
     return jsonify({"ok":True})
 
+# ── ROUTES: WIFI SETUP ───────────────────────────────────────────────────────
+@app.route("/api/wifi/connect", methods=["POST"])
+def wifi_connect():
+    """Save WiFi credentials and reboot to join the new network.
+
+    Accepts JSON: {"ssid": "NetworkName", "password": "secret"}
+    Password is optional for open networks.
+
+    Tears down the hotspot, saves the network as a NetworkManager
+    connection profile, then reboots. On boot, NetworkManager
+    auto-connects to the strongest saved network.
+    """
+    data = request.get_json(silent=True) or {}
+    ssid = (data.get("ssid") or "").strip()
+    password = (data.get("password") or "").strip()
+
+    if not ssid:
+        return jsonify({"success": False, "error": "Network name is required."}), 400
+
+    # Remove any existing profile for this SSID to avoid duplicates
+    subprocess.run(["nmcli", "connection", "delete", ssid],
+                   capture_output=True, text=True)
+
+    # Tear down the hotspot so it doesn't interfere on reboot
+    subprocess.run(["nmcli", "connection", "down", "Hotspot"],
+                   capture_output=True, text=True)
+    subprocess.run(["nmcli", "connection", "delete", "Hotspot"],
+                   capture_output=True, text=True)
+
+    # Save new connection profile bound to wlan0 (autoconnect on boot)
+    cmd = [
+        "nmcli", "connection", "add",
+        "type", "wifi",
+        "ifname", "wlan0",
+        "con-name", ssid,
+        "ssid", ssid,
+        "connection.autoconnect", "yes",
+    ]
+    if password:
+        cmd += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password]
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        err_msg = result.stderr.strip() or "Failed to save network."
+        return jsonify({"success": False, "error": err_msg}), 500
+
+    # Reboot after a short delay so the HTTP response gets back to the phone
+    def _delayed_reboot():
+        time.sleep(2)
+        subprocess.run(["sudo", "reboot"])
+
+    threading.Thread(target=_delayed_reboot, daemon=True).start()
+
+    return jsonify({"success": True, "message": f"Saved {ssid}. Rebooting in 2 seconds..."})
+
+# ── MAIN ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     from werkzeug.serving import make_server
     import ssl
